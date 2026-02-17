@@ -3,7 +3,12 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>Kyle's ToDo List</title>
+<meta name="theme-color" content="#4f46e5">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icons/icon-192.png">
+<title>ToDo</title>
 <style>
   :root {
     --bg: #f5f6fa;
@@ -114,6 +119,37 @@
   .header-btn:hover { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
   .header-btn svg { flex-shrink: 0; }
   .import-input { display: none; }
+
+  /* ── Notification Bell ── */
+  .notif-btn { position: relative; }
+  .notif-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-light); }
+  .notif-dot {
+    width: 8px; height: 8px; background: var(--danger); border-radius: 50%;
+    position: absolute; top: 6px; right: 8px;
+    animation: pulse 2s infinite;
+  }
+  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
+  .reminder-bell {
+    width: 24px; height: 24px; border: none; background: none;
+    color: var(--text-secondary); cursor: pointer; border-radius: 4px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 0.8rem; transition: all var(--transition); flex-shrink: 0;
+    opacity: 0.5;
+  }
+  .reminder-bell:hover { opacity: 1; background: var(--surface-hover); }
+  .reminder-bell.active { opacity: 1; color: var(--accent); }
+  .reminder-bell.no-date { opacity: 0.25; cursor: default; }
+  .notif-banner {
+    background: var(--accent-light); border: 1px solid var(--accent);
+    border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px;
+    font-size: 0.85rem; display: flex; align-items: center; gap: 10px;
+  }
+  .notif-banner button {
+    padding: 6px 14px; border: none; border-radius: var(--radius-sm);
+    background: var(--accent); color: #fff; cursor: pointer;
+    font-size: 0.8rem; font-weight: 600;
+  }
+  .notif-banner button:hover { background: var(--accent-hover); }
 
   /* ── Tabs ── */
   .tabs-container {
@@ -464,6 +500,9 @@
       Import
     </button>
     <input type="file" id="importFile" class="import-input" accept=".json" onchange="importData(event)">
+    <button class="header-btn notif-btn" id="notifBtn" onclick="toggleNotifications()" title="Toggle reminders">
+      🔔 Reminders
+    </button>
     <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">🌙</button>
   </div>
 </div>
@@ -500,10 +539,12 @@ let state = {
   todos: {},       // { sectionName: [todo, ...] }
   completed: [],   // [{ ...todo, section, completedAt }]
   theme: 'light',
-  searchQuery: ''
+  searchQuery: '',
+  remindersEnabled: false,
+  notifiedToday: {} // { todoId: '2026-02-16' } — tracks which todos got notified today
 };
 
-// Each todo: { id, title, priority, dueDate, subItems: [{id, title, done}], createdAt }
+// Each todo: { id, title, priority, dueDate, subItems: [{id, title, done}], createdAt, reminder: bool }
 // Each completed: { ...todo, section, completedAt }
 
 let dragState = { dragId: null, dragSection: null };
@@ -530,7 +571,11 @@ function load() {
 function init() {
   load();
   applyTheme();
+  updateNotifButton();
   render();
+  // Check reminders every 60 seconds
+  checkReminders();
+  setInterval(checkReminders, 60000);
 }
 
 // ─── Theme ───
@@ -593,6 +638,7 @@ function addTodo() {
     title,
     priority: prioritySelect.value,
     dueDate: dateInput.value || null,
+    reminder: !!dateInput.value,
     subItems: [],
     createdAt: new Date().toISOString()
   };
@@ -974,6 +1020,11 @@ function renderSection(section) {
           </div>
         </div>
         <div class="todo-actions">
+          <button class="reminder-bell ${todo.reminder ? 'active' : ''} ${!todo.dueDate ? 'no-date' : ''}"
+            onclick="${todo.dueDate ? `toggleReminder('${escapeHtml(section)}','${todo.id}')` : ''}"
+            title="${!todo.dueDate ? 'Set a due date to enable reminders' : (todo.reminder ? 'Reminder on — click to turn off' : 'Click to enable reminder')}">
+            ${todo.reminder ? '🔔' : '🔕'}
+          </button>
           <button class="icon-btn" onclick="editTodoTitle('${escapeHtml(section)}','${todo.id}',this.closest('.todo-item').querySelector('.todo-title-text'))" title="Edit">✏️</button>
           <button class="icon-btn delete" onclick="deleteTodo('${escapeHtml(section)}','${todo.id}')" title="Delete">🗑️</button>
         </div>
@@ -1174,6 +1225,125 @@ function importData(event) {
 
 // Launch
 init();
+
+// ─── Service Worker Registration ───
+if ('serviceWorker' in navigator) {
+  navigator.serviceWorker.register('./sw.js').then((reg) => {
+    // Check for updates periodically
+    setInterval(() => reg.update(), 60 * 60 * 1000);
+  }).catch((err) => console.log('SW registration failed:', err));
+}
+
+// ─── Notifications & Reminders ───
+function toggleNotifications() {
+  if (!state.remindersEnabled) {
+    if (!('Notification' in window)) {
+      showToast('Your browser does not support notifications');
+      return;
+    }
+    if (Notification.permission === 'denied') {
+      showToast('Notifications blocked — please allow in browser settings');
+      return;
+    }
+    if (Notification.permission === 'default') {
+      Notification.requestPermission().then(perm => {
+        if (perm === 'granted') {
+          state.remindersEnabled = true;
+          save(); updateNotifButton(); render();
+          showToast('Reminders enabled! You\'ll get notified about due items.');
+        } else {
+          showToast('Notification permission denied');
+        }
+      });
+      return;
+    }
+    // Already granted
+    state.remindersEnabled = true;
+    save(); updateNotifButton(); render();
+    showToast('Reminders enabled!');
+  } else {
+    state.remindersEnabled = false;
+    save(); updateNotifButton(); render();
+    showToast('Reminders disabled');
+  }
+}
+
+function updateNotifButton() {
+  const btn = document.getElementById('notifBtn');
+  if (state.remindersEnabled) {
+    btn.classList.add('active');
+    btn.innerHTML = '🔔 Reminders <span class="notif-dot"></span>';
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = '🔕 Reminders';
+  }
+}
+
+function toggleReminder(section, todoId) {
+  const todo = state.todos[section].find(t => t.id === todoId);
+  if (!todo) return;
+  todo.reminder = !todo.reminder;
+  if (todo.reminder && !state.remindersEnabled) {
+    toggleNotifications();
+  }
+  save(); render();
+}
+
+function checkReminders() {
+  if (!state.remindersEnabled) return;
+  if (Notification.permission !== 'granted') return;
+
+  const today = new Date().toISOString().slice(0, 10);
+  if (!state.notifiedToday) state.notifiedToday = {};
+
+  // Reset notifications if it's a new day
+  Object.keys(state.notifiedToday).forEach(id => {
+    if (state.notifiedToday[id] !== today) delete state.notifiedToday[id];
+  });
+
+  const dueSoon = [];
+  const overdue = [];
+
+  Object.keys(state.todos).forEach(section => {
+    (state.todos[section] || []).forEach(todo => {
+      if (!todo.dueDate || !todo.reminder) return;
+      if (state.notifiedToday[todo.id] === today) return;
+
+      const due = new Date(todo.dueDate + 'T23:59:59');
+      const now = new Date();
+      const diffMs = due - now;
+      const diffDays = Math.ceil(diffMs / (1000 * 60 * 60 * 24));
+
+      if (diffDays < 0) {
+        overdue.push({ todo, section });
+        state.notifiedToday[todo.id] = today;
+      } else if (diffDays <= 1) {
+        dueSoon.push({ todo, section });
+        state.notifiedToday[todo.id] = today;
+      }
+    });
+  });
+
+  if (overdue.length > 0) {
+    const titles = overdue.map(o => o.todo.title).join(', ');
+    new Notification('⚠️ Overdue Tasks', {
+      body: `${overdue.length} overdue: ${titles}`,
+      icon: '📋',
+      tag: 'todo-overdue'
+    });
+  }
+
+  if (dueSoon.length > 0) {
+    const titles = dueSoon.map(d => d.todo.title).join(', ');
+    new Notification('📅 Due Soon', {
+      body: `${dueSoon.length} due today/tomorrow: ${titles}`,
+      icon: '📋',
+      tag: 'todo-due-soon'
+    });
+  }
+
+  if (overdue.length > 0 || dueSoon.length > 0) save();
+}
 </script>
 </body>
 </html>
