@@ -297,6 +297,42 @@
   .priority-medium { background: var(--warning-light); color: var(--medium); }
   .priority-low { background: #dbeafe; color: var(--low); }
   [data-theme="dark"] .priority-low { background: #172554; }
+
+  /* ── Filter/Sort Toolbar ── */
+  .toolbar {
+    display: flex; align-items: center; gap: 8px;
+    margin-bottom: 14px; flex-wrap: wrap;
+  }
+  .toolbar-label {
+    font-size: 0.78rem; color: var(--text-secondary); font-weight: 500;
+  }
+  .filter-btn {
+    padding: 4px 12px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-secondary); cursor: pointer;
+    font-size: 0.75rem; font-weight: 600;
+    transition: all var(--transition); display: flex;
+    align-items: center; gap: 4px;
+  }
+  .filter-btn:hover { border-color: var(--accent); color: var(--text); }
+  .filter-btn.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
+  .filter-btn.active-high { background: var(--danger-light); border-color: var(--high); color: var(--high); }
+  .filter-btn.active-medium { background: var(--warning-light); border-color: var(--medium); color: var(--medium); }
+  .filter-btn.active-low { background: #dbeafe; border-color: var(--low); color: var(--low); }
+  [data-theme="dark"] .filter-btn.active-low { background: #172554; }
+  .toolbar-sep {
+    width: 1px; height: 20px; background: var(--border); margin: 0 4px;
+  }
+  .sort-btn {
+    padding: 4px 12px; border-radius: 20px;
+    border: 1px solid var(--border); background: var(--surface);
+    color: var(--text-secondary); cursor: pointer;
+    font-size: 0.75rem; font-weight: 600;
+    transition: all var(--transition); display: flex;
+    align-items: center; gap: 4px;
+  }
+  .sort-btn:hover { border-color: var(--accent); color: var(--text); }
+  .sort-btn.active { background: var(--accent-light); border-color: var(--accent); color: var(--accent); }
   .todo-meta {
     display: flex; align-items: center; gap: 12px;
     margin-top: 4px; font-size: 0.78rem; color: var(--text-secondary);
@@ -546,6 +582,8 @@ let state = {
   completed: [],   // [{ ...todo, section, completedAt }]
   theme: 'light',
   searchQuery: '',
+  filterPriority: 'all',  // 'all', 'high', 'medium', 'low'
+  sortBy: 'manual',       // 'manual', 'priority', 'due-date', 'created'
   remindersEnabled: false,
   notifiedToday: {} // { todoId: '2026-02-16' } — tracks which todos got notified today
 };
@@ -870,6 +908,16 @@ function handleSearch(query) {
   state.searchQuery = query.toLowerCase();
   render();
 }
+
+function setFilter(priority) {
+  state.filterPriority = priority;
+  save(); render();
+}
+
+function setSort(sortBy) {
+  state.sortBy = sortBy;
+  save(); render();
+}
 function highlightText(text, query) {
   if (!query) return escapeHtml(text);
   const escaped = escapeHtml(text);
@@ -967,6 +1015,29 @@ function renderSection(section) {
     );
   }
 
+  // Filter by priority
+  if (state.filterPriority !== 'all') {
+    todos = todos.filter(t => t.priority === state.filterPriority);
+  }
+
+  // Sort
+  if (state.sortBy !== 'manual') {
+    todos = [...todos]; // Don't mutate original order
+    if (state.sortBy === 'priority') {
+      const order = { high: 0, medium: 1, low: 2 };
+      todos.sort((a, b) => order[a.priority] - order[b.priority]);
+    } else if (state.sortBy === 'due-date') {
+      todos.sort((a, b) => {
+        if (!a.dueDate && !b.dueDate) return 0;
+        if (!a.dueDate) return 1;
+        if (!b.dueDate) return -1;
+        return a.dueDate.localeCompare(b.dueDate);
+      });
+    } else if (state.sortBy === 'created') {
+      todos.sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''));
+    }
+  }
+
   let html = `
     <div class="add-form">
       <div class="add-form-row">
@@ -981,6 +1052,25 @@ function renderSection(section) {
         </select>
         <input type="date" id="newTodoDueDate">
       </div>
+    </div>
+  `;
+
+  // Filter/Sort toolbar
+  const fp = state.filterPriority;
+  const sb = state.sortBy;
+  html += `
+    <div class="toolbar">
+      <span class="toolbar-label">Filter:</span>
+      <button class="filter-btn ${fp === 'all' ? 'active' : ''}" onclick="setFilter('all')">All</button>
+      <button class="filter-btn ${fp === 'high' ? 'active-high' : ''}" onclick="setFilter('high')">🔴 High</button>
+      <button class="filter-btn ${fp === 'medium' ? 'active-medium' : ''}" onclick="setFilter('medium')">🟡 Medium</button>
+      <button class="filter-btn ${fp === 'low' ? 'active-low' : ''}" onclick="setFilter('low')">🔵 Low</button>
+      <span class="toolbar-sep"></span>
+      <span class="toolbar-label">Sort:</span>
+      <button class="sort-btn ${sb === 'manual' ? 'active' : ''}" onclick="setSort('manual')">Manual</button>
+      <button class="sort-btn ${sb === 'priority' ? 'active' : ''}" onclick="setSort('priority')">Priority</button>
+      <button class="sort-btn ${sb === 'due-date' ? 'active' : ''}" onclick="setSort('due-date')">Due Date</button>
+      <button class="sort-btn ${sb === 'created' ? 'active' : ''}" onclick="setSort('created')">Newest</button>
     </div>
   `;
 
