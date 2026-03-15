@@ -666,9 +666,17 @@ async function chooseSyncFolder() {
   }
   try {
     syncDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    showToast('Folder connected: ' + syncDirHandle.name);
     updateSyncUI();
-    await syncToFolder();
+    // If a sync file already exists in the folder, load from it first
+    const loaded = await syncFromFolder();
+    if (loaded) {
+      save();
+      render();
+      showToast('Loaded existing data from ' + syncDirHandle.name);
+    } else {
+      await syncToFolder();
+      showToast('Folder connected: ' + syncDirHandle.name);
+    }
   } catch (err) {
     if (err.name !== 'AbortError') {
       showToast('Failed to access folder');
