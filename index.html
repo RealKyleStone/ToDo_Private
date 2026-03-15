@@ -499,6 +499,39 @@
   }
   .toast .undo-btn:hover { text-decoration: underline; }
 
+  /* ── Sync Folder ── */
+  .sync-btn.active { color: var(--success); border-color: var(--success); background: var(--success-light); }
+  .sync-btn .sync-dot {
+    width: 8px; height: 8px; background: var(--success); border-radius: 50%;
+    display: inline-block; margin-left: 4px;
+  }
+  .sync-popover {
+    position: absolute; top: 100%; right: 0; margin-top: 8px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 16px; width: 340px;
+    box-shadow: var(--shadow-lg); z-index: 150;
+    display: none; text-align: left;
+  }
+  .sync-popover.show { display: block; }
+  .sync-popover h4 { font-size: 0.9rem; margin-bottom: 10px; }
+  .sync-popover p { font-size: 0.8rem; color: var(--text-secondary); margin-bottom: 10px; line-height: 1.5; }
+  .sync-popover .setup-steps {
+    font-size: 0.78rem; color: var(--text-secondary); background: var(--bg);
+    border-radius: var(--radius-sm); padding: 10px 12px; margin-bottom: 12px;
+    line-height: 1.6;
+  }
+  .sync-popover .setup-steps strong { color: var(--text); }
+  .sync-popover .sync-actions { display: flex; flex-direction: column; gap: 6px; }
+  .sync-popover .sync-actions button { width: 100%; }
+  .sync-status {
+    font-size: 0.75rem; color: var(--text-secondary); padding: 6px 0;
+    display: flex; align-items: center; gap: 6px;
+  }
+  .sync-status .folder-name {
+    font-weight: 600; color: var(--text); word-break: break-all;
+  }
+  .sync-wrapper { position: relative; }
+
   /* ── Search Highlight ── */
   mark {
     background: var(--warning-light); color: var(--text);
@@ -545,6 +578,28 @@
     <button class="header-btn notif-btn" id="notifBtn" onclick="toggleNotifications()" title="Toggle reminders">
       🔔 Reminders
     </button>
+    <div class="sync-wrapper">
+      <button class="header-btn sync-btn" id="syncBtn" onclick="toggleSyncPopover()" title="Sync to folder">
+        📁 Sync
+      </button>
+      <div class="sync-popover" id="syncPopover">
+        <h4>📁 Folder Sync</h4>
+        <p>Sync your todos to a local folder. Use a cloud-synced folder (Google Drive, OneDrive, Dropbox) to access your todos across devices.</p>
+        <div class="setup-steps">
+          <strong>Setup:</strong><br>
+          1. Install <strong>Google Drive</strong>, <strong>OneDrive</strong>, or <strong>Dropbox</strong> desktop app<br>
+          2. Click <strong>"Choose Folder"</strong> below and pick a folder inside your synced drive<br>
+          3. Your todos will auto-save to that folder as a JSON file<br>
+          4. On another device, choose the same synced folder to load your data
+        </div>
+        <div id="syncStatusArea"></div>
+        <div class="sync-actions">
+          <button class="btn btn-primary" id="syncChooseBtn" onclick="chooseSyncFolder()">📂 Choose Folder</button>
+          <button class="btn btn-ghost" id="syncNowBtn" onclick="syncNow()" style="display:none;">🔄 Sync Now</button>
+          <button class="btn btn-ghost" id="syncDisconnectBtn" onclick="disconnectSyncFolder()" style="display:none;">✕ Disconnect Folder</button>
+        </div>
+      </div>
+    </div>
     <button class="theme-btn" onclick="toggleTheme()" title="Toggle theme" id="themeBtn">🌙</button>
   </div>
 </div>
@@ -595,9 +650,161 @@ let dragState = { dragId: null, dragSection: null };
 let modalCallback = null;
 let lastCompleted = null;
 
+// ─── Folder Sync (File System Access API) ───
+let syncDirHandle = null;
+const SYNC_FILENAME = 'todo-sync-data.json';
+let syncSaveTimeout = null;
+
+function isFSAccessSupported() {
+  return typeof window.showDirectoryPicker === 'function';
+}
+
+async function chooseSyncFolder() {
+  if (!isFSAccessSupported()) {
+    showToast('Your browser does not support folder sync. Use Chrome or Edge.');
+    return;
+  }
+  try {
+    syncDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    showToast('Folder connected: ' + syncDirHandle.name);
+    updateSyncUI();
+    await syncToFolder();
+  } catch (err) {
+    if (err.name !== 'AbortError') {
+      showToast('Failed to access folder');
+      console.error(err);
+    }
+  }
+}
+
+function disconnectSyncFolder() {
+  syncDirHandle = null;
+  showToast('Sync folder disconnected');
+  updateSyncUI();
+}
+
+async function syncToFolder() {
+  if (!syncDirHandle) return;
+  try {
+    await syncDirHandle.requestPermission({ mode: 'readwrite' });
+    const fileHandle = await syncDirHandle.getFileHandle(SYNC_FILENAME, { create: true });
+    const writable = await fileHandle.createWritable();
+    const data = {
+      syncedAt: new Date().toISOString(),
+      version: 1,
+      sections: state.sections,
+      todos: state.todos,
+      completed: state.completed
+    };
+    await writable.write(JSON.stringify(data, null, 2));
+    await writable.close();
+  } catch (err) {
+    console.error('Sync write failed:', err);
+    if (err.name === 'NotAllowedError') {
+      showToast('Folder permission lost — please reconnect');
+      syncDirHandle = null;
+      updateSyncUI();
+    }
+  }
+}
+
+async function syncFromFolder() {
+  if (!syncDirHandle) return false;
+  try {
+    await syncDirHandle.requestPermission({ mode: 'readwrite' });
+    const fileHandle = await syncDirHandle.getFileHandle(SYNC_FILENAME);
+    const file = await fileHandle.getFile();
+    const text = await file.text();
+    const data = JSON.parse(text);
+    if (!data.sections || !data.todos) return false;
+    state.sections = data.sections;
+    state.todos = data.todos;
+    state.completed = data.completed || [];
+    state.sections.forEach(s => { if (!state.todos[s]) state.todos[s] = []; });
+    if (!state.sections.includes(state.activeTab)) {
+      state.activeTab = state.sections[0] || 'General';
+    }
+    return true;
+  } catch (err) {
+    if (err.name === 'NotFoundError') return false;
+    if (err.name === 'NotAllowedError') {
+      showToast('Folder permission lost — please reconnect');
+      syncDirHandle = null;
+      updateSyncUI();
+    } else {
+      console.error('Sync read failed:', err);
+    }
+    return false;
+  }
+}
+
+async function syncNow() {
+  if (!syncDirHandle) { showToast('No folder connected'); return; }
+  const loaded = await syncFromFolder();
+  if (loaded) {
+    save();
+    render();
+    showToast('Loaded latest data from folder');
+  } else {
+    await syncToFolder();
+    showToast('Saved data to folder');
+  }
+}
+
+function debouncedSyncToFolder() {
+  if (!syncDirHandle) return;
+  clearTimeout(syncSaveTimeout);
+  syncSaveTimeout = setTimeout(() => syncToFolder(), 1000);
+}
+
+function toggleSyncPopover() {
+  const popover = document.getElementById('syncPopover');
+  popover.classList.toggle('show');
+}
+
+function updateSyncUI() {
+  const btn = document.getElementById('syncBtn');
+  const statusArea = document.getElementById('syncStatusArea');
+  const chooseBtn = document.getElementById('syncChooseBtn');
+  const syncNowBtn = document.getElementById('syncNowBtn');
+  const disconnectBtn = document.getElementById('syncDisconnectBtn');
+
+  if (syncDirHandle) {
+    btn.classList.add('active');
+    btn.innerHTML = '📁 Sync <span class="sync-dot"></span>';
+    statusArea.innerHTML = `<div class="sync-status">Connected to: <span class="folder-name">${escapeHtml(syncDirHandle.name)}</span></div>`;
+    chooseBtn.textContent = '📂 Change Folder';
+    syncNowBtn.style.display = '';
+    disconnectBtn.style.display = '';
+  } else {
+    btn.classList.remove('active');
+    btn.innerHTML = '📁 Sync';
+    statusArea.innerHTML = '';
+    chooseBtn.textContent = '📂 Choose Folder';
+    syncNowBtn.style.display = 'none';
+    disconnectBtn.style.display = 'none';
+  }
+
+  if (!isFSAccessSupported()) {
+    statusArea.innerHTML = '<div class="sync-status" style="color:var(--danger)">⚠ Your browser does not support folder sync. Use Chrome or Edge.</div>';
+    chooseBtn.disabled = true;
+    chooseBtn.style.opacity = '0.5';
+  }
+}
+
+// Close popover when clicking outside
+document.addEventListener('click', (e) => {
+  const wrapper = document.querySelector('.sync-wrapper');
+  const popover = document.getElementById('syncPopover');
+  if (wrapper && popover && !wrapper.contains(e.target)) {
+    popover.classList.remove('show');
+  }
+});
+
 // ─── Persistence ───
 function save() {
   localStorage.setItem('kyle-todo-state', JSON.stringify(state));
+  debouncedSyncToFolder();
 }
 function load() {
   const saved = localStorage.getItem('kyle-todo-state');
@@ -616,6 +823,7 @@ function init() {
   load();
   applyTheme();
   updateNotifButton();
+  updateSyncUI();
   render();
   // Check reminders every 60 seconds
   checkReminders();
