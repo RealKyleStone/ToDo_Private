@@ -387,10 +387,10 @@
   .sub-item:hover .sub-drag-handle { opacity: 0.6; }
   .sub-item:hover .sub-drag-handle:hover { opacity: 1; }
   .sub-complete-btn {
-    padding: 2px 8px; border-radius: 4px;
-    border: 1px solid var(--border); background: var(--surface);
-    color: var(--text-secondary); cursor: pointer; font-size: 0.65rem;
-    font-weight: 600; white-space: nowrap; flex-shrink: 0;
+    padding: 6px 14px; border-radius: var(--radius-sm);
+    border: 1px solid var(--success); background: var(--success-light);
+    color: var(--success); cursor: pointer; font-size: 0.78rem;
+    font-weight: 700; white-space: nowrap; flex-shrink: 0;
     transition: all var(--transition);
   }
   .sub-complete-btn:hover { background: var(--success); color: #fff; border-color: var(--success); }
@@ -538,6 +538,52 @@
     padding: 0 2px; border-radius: 2px;
   }
 
+  /* ── Recently Completed Sidebar ── */
+  .app-layout {
+    display: flex; min-height: calc(100vh - 110px);
+  }
+  .app-layout .main { flex: 1; min-width: 0; }
+  .undo-sidebar {
+    width: 280px; flex-shrink: 0;
+    background: var(--surface); border-left: 1px solid var(--border);
+    padding: 16px; overflow-y: auto;
+    max-height: calc(100vh - 110px); position: sticky; top: 110px;
+  }
+  .undo-sidebar-header {
+    font-size: 0.8rem; font-weight: 700; color: var(--text-secondary);
+    text-transform: uppercase; letter-spacing: 0.5px;
+    margin-bottom: 12px; display: flex; align-items: center; gap: 6px;
+  }
+  .undo-sidebar-empty {
+    font-size: 0.8rem; color: var(--text-secondary); text-align: center;
+    padding: 24px 8px; opacity: 0.6;
+  }
+  .undo-item {
+    background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+    margin-bottom: 8px; transition: all var(--transition);
+  }
+  .undo-item:hover { border-color: var(--accent); }
+  .undo-item-title {
+    font-size: 0.82rem; font-weight: 500; margin-bottom: 4px;
+    word-break: break-word;
+  }
+  .undo-item-meta {
+    font-size: 0.7rem; color: var(--text-secondary);
+    display: flex; align-items: center; gap: 6px; margin-bottom: 6px;
+  }
+  .undo-item-meta .section-label {
+    background: var(--accent-light); color: var(--accent);
+    padding: 1px 6px; border-radius: 8px; font-weight: 600;
+  }
+  .undo-item-btn {
+    padding: 4px 10px; border-radius: var(--radius-sm);
+    border: 1px solid var(--accent); background: var(--accent-light);
+    color: var(--accent); cursor: pointer; font-size: 0.72rem;
+    font-weight: 600; transition: all var(--transition); width: 100%;
+  }
+  .undo-item-btn:hover { background: var(--accent); color: #fff; }
+
   /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -545,6 +591,9 @@
   ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
   /* ── Responsive ── */
+  @media (max-width: 900px) {
+    .undo-sidebar { width: 220px; }
+  }
   @media (max-width: 600px) {
     .header { padding: 12px 16px; flex-wrap: wrap; gap: 8px; }
     .search-box { width: 100%; order: 3; }
@@ -553,6 +602,11 @@
     .tab { padding: 10px 12px; font-size: 0.8rem; }
     .todo-actions { opacity: 1; }
     .sub-item .icon-btn { opacity: 1; }
+    .app-layout { flex-direction: column; }
+    .undo-sidebar {
+      width: 100%; max-height: none; position: static;
+      border-left: none; border-top: 1px solid var(--border);
+    }
   }
 </style>
 </head>
@@ -608,7 +662,10 @@
 <div class="tabs-container" id="tabsContainer"></div>
 
 <!-- Main Content -->
-<div class="main" id="mainContent"></div>
+<div class="app-layout">
+  <div class="main" id="mainContent"></div>
+  <div class="undo-sidebar" id="undoSidebar"></div>
+</div>
 
 <!-- Modal -->
 <div class="modal-overlay" id="modal">
@@ -649,6 +706,7 @@ let state = {
 let dragState = { dragId: null, dragSection: null };
 let modalCallback = null;
 let lastCompleted = null;
+let sessionCompleted = []; // Tracks items completed this session for the undo sidebar
 
 // ─── Folder Sync (File System Access API) ───
 let syncDirHandle = null;
@@ -921,6 +979,7 @@ function completeTodo(section, todoId) {
   // Mark all sub-items done
   completed.subItems = completed.subItems.map(s => ({ ...s, done: true }));
   state.completed.unshift(completed);
+  sessionCompleted.unshift(completed);
   lastCompleted = completed;
   save(); render();
   showToast(`"${todo.title}" completed!`, true);
@@ -938,6 +997,7 @@ function undoComplete() {
       state.todos[section] = [];
     }
     state.todos[section].push(todo);
+    sessionCompleted = sessionCompleted.filter(c => c.id !== lastCompleted.id);
     lastCompleted = null;
     save(); render();
     hideToast();
@@ -955,6 +1015,7 @@ function uncompleteItem(completedId) {
     state.todos[section] = [];
   }
   state.todos[section].push(todo);
+  sessionCompleted = sessionCompleted.filter(c => c.id !== completedId);
   save(); render();
   showToast(`"${todo.title}" moved back to ${section}`);
 }
@@ -1183,6 +1244,7 @@ function hideToast() {
 function render() {
   renderTabs();
   renderContent();
+  renderUndoSidebar();
 }
 
 function renderTabs() {
@@ -1217,6 +1279,44 @@ function renderContent() {
   } else {
     main.innerHTML = renderSection(state.activeTab);
   }
+}
+
+function undoSessionItem(completedId) {
+  const idx = state.completed.findIndex(c => c.id === completedId);
+  if (idx === -1) return;
+  const item = state.completed.splice(idx, 1)[0];
+  const { section, completedAt, ...todo } = item;
+  todo.subItems = todo.subItems.map(s => ({ ...s, done: false }));
+  if (!state.todos[section]) {
+    state.sections.push(section);
+    state.todos[section] = [];
+  }
+  state.todos[section].push(todo);
+  sessionCompleted = sessionCompleted.filter(c => c.id !== completedId);
+  save(); render();
+  showToast(`"${todo.title}" restored to ${section}`);
+}
+
+function renderUndoSidebar() {
+  const sidebar = document.getElementById('undoSidebar');
+  let html = '<div class="undo-sidebar-header">↩️ Recently Done</div>';
+  if (sessionCompleted.length === 0) {
+    html += '<div class="undo-sidebar-empty">Items you mark done will appear here for quick undo</div>';
+  } else {
+    sessionCompleted.forEach(item => {
+      const time = new Date(item.completedAt);
+      const timeStr = time.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      html += `<div class="undo-item">
+        <div class="undo-item-title">${escapeHtml(item.title)}</div>
+        <div class="undo-item-meta">
+          <span class="section-label">${escapeHtml(item.section)}</span>
+          <span>${timeStr}</span>
+        </div>
+        <button class="undo-item-btn" onclick="undoSessionItem('${item.id}')">Undo</button>
+      </div>`;
+    });
+  }
+  sidebar.innerHTML = html;
 }
 
 function renderSection(section) {
