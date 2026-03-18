@@ -499,12 +499,105 @@
   }
   .toast .undo-btn:hover { text-decoration: underline; }
 
+  /* ── Notes ── */
+  .notes-toggle {
+    position: relative;
+  }
+  .notes-toggle .note-count {
+    position: absolute; top: -4px; right: -4px;
+    background: var(--accent); color: #fff;
+    font-size: 0.6rem; font-weight: 700;
+    padding: 1px 5px; border-radius: 8px;
+    min-width: 14px; text-align: center;
+  }
+  .notes-section {
+    margin-top: 10px; margin-left: 30px;
+    background: var(--bg); border-radius: var(--radius-sm);
+    padding: 12px; border: 1px solid var(--border);
+  }
+  .notes-header {
+    font-size: 0.78rem; font-weight: 600; color: var(--text-secondary);
+    margin-bottom: 8px; display: flex; align-items: center; gap: 6px;
+  }
+  .note-item {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 10px 12px;
+    margin-bottom: 8px; position: relative;
+    transition: all var(--transition);
+  }
+  .note-item:hover { border-color: var(--accent-light); }
+  .note-item:last-of-type { margin-bottom: 0; }
+  .note-content {
+    font-size: 0.85rem; line-height: 1.5;
+    white-space: pre-wrap; word-break: break-word;
+  }
+  .note-content a {
+    color: var(--accent); text-decoration: underline;
+    word-break: break-all;
+  }
+  .note-content a:hover { color: var(--accent-hover); }
+  .note-meta {
+    font-size: 0.7rem; color: var(--text-secondary);
+    margin-top: 6px; display: flex; align-items: center;
+    justify-content: space-between;
+  }
+  .note-actions {
+    display: flex; gap: 4px; opacity: 0;
+    transition: opacity var(--transition);
+  }
+  .note-item:hover .note-actions { opacity: 1; }
+  .note-actions .icon-btn { width: 22px; height: 22px; font-size: 0.7rem; }
+  .add-note-form {
+    margin-top: 10px;
+  }
+  .add-note-form textarea {
+    width: 100%; padding: 8px 10px;
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    background: var(--surface); color: var(--text);
+    font-size: 0.85rem; font-family: inherit;
+    resize: vertical; min-height: 60px; outline: none;
+    transition: border var(--transition);
+  }
+  .add-note-form textarea:focus { border-color: var(--accent); }
+  .add-note-form textarea::placeholder { color: var(--text-secondary); }
+  .add-note-form .form-row {
+    display: flex; justify-content: flex-end; gap: 6px; margin-top: 6px;
+  }
+  .notes-empty {
+    font-size: 0.8rem; color: var(--text-secondary);
+    text-align: center; padding: 8px; opacity: 0.7;
+  }
+
   /* ── Sync Folder ── */
   .sync-btn.active { color: var(--success); border-color: var(--success); background: var(--success-light); }
+  .sync-btn.disconnected { color: var(--warning); border-color: var(--warning); background: var(--warning-light); }
   .sync-btn .sync-dot {
     width: 8px; height: 8px; background: var(--success); border-radius: 50%;
     display: inline-block; margin-left: 4px;
   }
+  .sync-btn .sync-dot.warn {
+    background: var(--warning);
+    animation: pulse 1.5s infinite;
+  }
+  .sync-reconnect-banner {
+    background: var(--warning-light); border: 1px solid var(--warning);
+    border-radius: var(--radius); padding: 12px 16px; margin-bottom: 16px;
+    display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  }
+  .sync-reconnect-banner .banner-icon { font-size: 1.2rem; }
+  .sync-reconnect-banner .banner-text {
+    flex: 1; min-width: 200px; font-size: 0.85rem; line-height: 1.4;
+  }
+  .sync-reconnect-banner .banner-text strong { color: var(--text); }
+  .sync-reconnect-banner .banner-actions { display: flex; gap: 8px; }
+  .sync-reconnect-banner .btn-warn {
+    background: var(--warning); color: #fff; border: none;
+  }
+  .sync-reconnect-banner .btn-warn:hover { opacity: 0.9; }
+  .sync-reconnect-banner .btn-dismiss {
+    background: none; border: 1px solid var(--border); color: var(--text-secondary);
+  }
+  .sync-reconnect-banner .btn-dismiss:hover { background: var(--surface-hover); }
   .sync-popover {
     position: absolute; top: 100%; right: 0; margin-top: 8px;
     background: var(--surface); border: 1px solid var(--border);
@@ -697,7 +790,9 @@ let state = {
   filterPriority: 'all',  // 'all', 'high', 'medium', 'low'
   sortBy: 'manual',       // 'manual', 'priority', 'due-date', 'created'
   remindersEnabled: false,
-  notifiedToday: {} // { todoId: '2026-02-16' } — tracks which todos got notified today
+  notifiedToday: {}, // { todoId: '2026-02-16' } — tracks which todos got notified today
+  syncFolderName: null,   // Persisted folder name for reconnect prompt
+  syncBannerDismissed: false  // Whether user dismissed the reconnect banner this session
 };
 
 // Each todo: { id, title, priority, dueDate, subItems: [{id, title, done}], createdAt, reminder: bool }
@@ -707,6 +802,7 @@ let dragState = { dragId: null, dragSection: null };
 let modalCallback = null;
 let lastCompleted = null;
 let sessionCompleted = []; // Tracks items completed this session for the undo sidebar
+let expandedNotes = new Set(); // Track which todos have notes panel expanded
 
 // ─── Folder Sync (File System Access API) ───
 let syncDirHandle = null;
@@ -724,6 +820,8 @@ async function chooseSyncFolder() {
   }
   try {
     syncDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    state.syncFolderName = syncDirHandle.name;
+    state.syncBannerDismissed = false;
     updateSyncUI();
     // If a sync file already exists in the folder, load from it first
     const loaded = await syncFromFolder();
@@ -733,6 +831,7 @@ async function chooseSyncFolder() {
       showToast('Loaded existing data from ' + syncDirHandle.name);
     } else {
       await syncToFolder();
+      save();
       showToast('Folder connected: ' + syncDirHandle.name);
     }
   } catch (err) {
@@ -745,8 +844,28 @@ async function chooseSyncFolder() {
 
 function disconnectSyncFolder() {
   syncDirHandle = null;
+  state.syncFolderName = null;
+  state.syncBannerDismissed = false;
+  save();
   showToast('Sync folder disconnected');
   updateSyncUI();
+  render();
+}
+
+function dismissSyncBanner() {
+  state.syncBannerDismissed = true;
+  render();
+}
+
+function forgetSyncFolder() {
+  state.syncFolderName = null;
+  state.syncBannerDismissed = false;
+  save();
+  render();
+}
+
+function isSyncDisconnected() {
+  return state.syncFolderName && !syncDirHandle;
 }
 
 async function syncToFolder() {
@@ -836,14 +955,24 @@ function updateSyncUI() {
   const disconnectBtn = document.getElementById('syncDisconnectBtn');
 
   if (syncDirHandle) {
+    btn.classList.remove('disconnected');
     btn.classList.add('active');
     btn.innerHTML = '📁 Sync <span class="sync-dot"></span>';
     statusArea.innerHTML = `<div class="sync-status">Connected to: <span class="folder-name">${escapeHtml(syncDirHandle.name)}</span></div>`;
     chooseBtn.textContent = '📂 Change Folder';
     syncNowBtn.style.display = '';
     disconnectBtn.style.display = '';
-  } else {
+  } else if (state.syncFolderName) {
+    // Previously connected but now disconnected
     btn.classList.remove('active');
+    btn.classList.add('disconnected');
+    btn.innerHTML = '📁 Sync <span class="sync-dot warn"></span>';
+    statusArea.innerHTML = `<div class="sync-status" style="color:var(--warning)">⚠️ Disconnected from: <span class="folder-name">${escapeHtml(state.syncFolderName)}</span></div>`;
+    chooseBtn.textContent = '📂 Reconnect Folder';
+    syncNowBtn.style.display = 'none';
+    disconnectBtn.style.display = 'none';
+  } else {
+    btn.classList.remove('active', 'disconnected');
     btn.innerHTML = '📁 Sync';
     statusArea.innerHTML = '';
     chooseBtn.textContent = '📂 Choose Folder';
@@ -1055,6 +1184,77 @@ function cyclePriority(section, todoId) {
   const cycle = { high: 'medium', medium: 'low', low: 'high' };
   todo.priority = cycle[todo.priority] || 'medium';
   save(); render();
+}
+
+// ─── Notes ───
+function toggleNotesPanel(todoId) {
+  if (expandedNotes.has(todoId)) {
+    expandedNotes.delete(todoId);
+  } else {
+    expandedNotes.add(todoId);
+  }
+  render();
+}
+
+function addNote(section, todoId) {
+  const textarea = document.getElementById(`note-input-${todoId}`);
+  if (!textarea || !textarea.value.trim()) return;
+  const todo = state.todos[section].find(t => t.id === todoId);
+  if (!todo) return;
+  if (!todo.notes) todo.notes = [];
+  todo.notes.push({
+    id: genId(),
+    content: textarea.value.trim(),
+    createdAt: new Date().toISOString()
+  });
+  textarea.value = '';
+  save(); render();
+}
+
+function deleteNote(section, todoId, noteId) {
+  const todo = state.todos[section].find(t => t.id === todoId);
+  if (!todo || !todo.notes) return;
+  todo.notes = todo.notes.filter(n => n.id !== noteId);
+  save(); render();
+}
+
+function editNote(section, todoId, noteId, el) {
+  const todo = state.todos[section].find(t => t.id === todoId);
+  if (!todo || !todo.notes) return;
+  const note = todo.notes.find(n => n.id === noteId);
+  if (!note) return;
+  const current = note.content;
+  const textarea = document.createElement('textarea');
+  textarea.className = 'inline-edit';
+  textarea.value = current;
+  textarea.style.minHeight = '60px';
+  textarea.style.resize = 'vertical';
+  el.replaceWith(textarea);
+  textarea.focus();
+  textarea.setSelectionRange(textarea.value.length, textarea.value.length);
+  const commit = () => {
+    const newVal = textarea.value.trim();
+    if (newVal && newVal !== current) {
+      note.content = newVal;
+      save();
+    }
+    render();
+  };
+  textarea.addEventListener('blur', commit);
+  textarea.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') { textarea.value = current; textarea.blur(); }
+    if (e.key === 'Enter' && e.ctrlKey) { e.preventDefault(); textarea.blur(); }
+  });
+}
+
+function linkifyText(text) {
+  const escaped = escapeHtml(text);
+  // Match URLs (http, https, ftp) and www. links
+  const urlRegex = /(https?:\/\/[^\s<]+|www\.[^\s<]+)/gi;
+  return escaped.replace(urlRegex, (url) => {
+    const href = url.startsWith('www.') ? 'https://' + url : url;
+    return `<a href="${href}" target="_blank" rel="noopener noreferrer">${url}</a>`;
+  });
 }
 
 // ─── Inline Editing ───
@@ -1274,11 +1474,30 @@ function renderTabs() {
 
 function renderContent() {
   const main = document.getElementById('mainContent');
-  if (state.activeTab === '__completed__') {
-    main.innerHTML = renderCompleted();
-  } else {
-    main.innerHTML = renderSection(state.activeTab);
+  let html = '';
+  
+  // Show sync reconnect banner if needed
+  if (isSyncDisconnected() && !state.syncBannerDismissed) {
+    html += `<div class="sync-reconnect-banner">
+      <span class="banner-icon">⚠️</span>
+      <div class="banner-text">
+        <strong>Sync folder disconnected.</strong> Your data was previously synced to "<strong>${escapeHtml(state.syncFolderName)}</strong>". 
+        Reconnect to sync your changes across devices.
+      </div>
+      <div class="banner-actions">
+        <button class="btn btn-sm btn-warn" onclick="chooseSyncFolder()">📂 Reconnect</button>
+        <button class="btn btn-sm btn-dismiss" onclick="dismissSyncBanner()">Later</button>
+        <button class="btn btn-sm btn-dismiss" onclick="forgetSyncFolder()" title="Stop showing this and forget the folder">Forget</button>
+      </div>
+    </div>`;
   }
+  
+  if (state.activeTab === '__completed__') {
+    html += renderCompleted();
+  } else {
+    html += renderSection(state.activeTab);
+  }
+  main.innerHTML = html;
 }
 
 function undoSessionItem(completedId) {
@@ -1327,7 +1546,8 @@ function renderSection(section) {
   if (query) {
     todos = todos.filter(t =>
       t.title.toLowerCase().includes(query) ||
-      t.subItems.some(s => s.title.toLowerCase().includes(query))
+      t.subItems.some(s => s.title.toLowerCase().includes(query)) ||
+      (t.notes && t.notes.some(n => n.content.toLowerCase().includes(query)))
     );
   }
 
@@ -1441,6 +1661,9 @@ function renderSection(section) {
           </div>
         </div>
         <div class="todo-actions">
+          <button class="icon-btn notes-toggle" onclick="toggleNotesPanel('${todo.id}')" title="Notes">
+            📝${(todo.notes && todo.notes.length > 0) ? `<span class="note-count">${todo.notes.length}</span>` : ''}
+          </button>
           <button class="reminder-bell ${todo.reminder ? 'active' : ''} ${!todo.dueDate ? 'no-date' : ''}"
             onclick="${todo.dueDate ? `toggleReminder('${escapeHtml(section)}','${todo.id}')` : ''}"
             title="${!todo.dueDate ? 'Set a due date to enable reminders' : (todo.reminder ? 'Reminder on — click to turn off' : 'Click to enable reminder')}">
@@ -1450,6 +1673,37 @@ function renderSection(section) {
           <button class="icon-btn delete" onclick="deleteTodo('${escapeHtml(section)}','${todo.id}')" title="Delete">🗑️</button>
         </div>
       </div>`;
+
+    // Notes section (expandable)
+    if (expandedNotes.has(todo.id)) {
+      const notes = todo.notes || [];
+      html += `<div class="notes-section">
+        <div class="notes-header">📝 Notes</div>`;
+      if (notes.length === 0) {
+        html += `<div class="notes-empty">No notes yet. Add one below.</div>`;
+      } else {
+        notes.forEach(note => {
+          const noteDate = new Date(note.createdAt);
+          const noteDateStr = noteDate.toLocaleDateString('en-US', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' });
+          html += `<div class="note-item">
+            <div class="note-content" ondblclick="editNote('${escapeHtml(section)}','${todo.id}','${note.id}',this)">${linkifyText(note.content)}</div>
+            <div class="note-meta">
+              <span>${noteDateStr}</span>
+              <div class="note-actions">
+                <button class="icon-btn" onclick="editNote('${escapeHtml(section)}','${todo.id}','${note.id}',this.closest('.note-item').querySelector('.note-content'))" title="Edit">✏️</button>
+                <button class="icon-btn delete" onclick="deleteNote('${escapeHtml(section)}','${todo.id}','${note.id}')" title="Delete">🗑️</button>
+              </div>
+            </div>
+          </div>`;
+        });
+      }
+      html += `<div class="add-note-form">
+        <textarea id="note-input-${todo.id}" placeholder="Add a note or link..."></textarea>
+        <div class="form-row">
+          <button class="btn btn-sm btn-primary" onclick="addNote('${escapeHtml(section)}','${todo.id}')">Add Note</button>
+        </div>
+      </div></div>`;
+    }
 
     // Sub items
     if (todo.subItems.length > 0) {
@@ -1489,7 +1743,8 @@ function renderCompleted() {
     completed = completed.filter(c =>
       c.title.toLowerCase().includes(query) ||
       c.section.toLowerCase().includes(query) ||
-      c.subItems.some(s => s.title.toLowerCase().includes(query))
+      c.subItems.some(s => s.title.toLowerCase().includes(query)) ||
+      (c.notes && c.notes.some(n => n.content.toLowerCase().includes(query)))
     );
   }
 
@@ -1546,6 +1801,17 @@ function renderCompleted() {
           html += `<div class="sub-item">
             <span class="sub-complete-btn done">✓ Done</span>
             <span class="sub-item-text completed-text">${highlightText(sub.title, query)}</span>
+          </div>`;
+        });
+        html += `</div>`;
+      }
+      // Show notes on completed items (read-only)
+      if (item.notes && item.notes.length > 0) {
+        html += `<div class="notes-section" style="margin-top:8px;opacity:0.8;">
+          <div class="notes-header">📝 Notes (${item.notes.length})</div>`;
+        item.notes.forEach(note => {
+          html += `<div class="note-item">
+            <div class="note-content">${linkifyText(note.content)}</div>
           </div>`;
         });
         html += `</div>`;
