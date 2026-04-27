@@ -187,6 +187,11 @@
     font-size: 0.7rem;
   }
   .tab-action-btn:hover { background: var(--danger-light); color: var(--danger); }
+  .tab[draggable="true"] { cursor: grab; }
+  .tab[draggable="true"]:active { cursor: grabbing; }
+  .tab[draggable="true"] .tab-action-btn { cursor: pointer; }
+  .tab.dragging { opacity: 0.35; }
+  .tab.tab-drag-over { box-shadow: -3px 0 0 0 var(--accent); background: var(--accent-light) !important; }
   .add-tab-btn {
     padding: 10px 14px; border: none; background: none;
     color: var(--text-secondary); cursor: pointer; font-size: 1.1rem;
@@ -928,6 +933,7 @@ let state = {
 // Each completed: { ...todo, section, completedAt }
 
 let dragState = { dragId: null, dragSection: null };
+let tabDragSection = null;
 let modalCallback = null;
 let lastCompleted = null;
 let sessionCompleted = []; // Tracks items completed this session for the undo sidebar
@@ -1565,6 +1571,36 @@ function editSubItemTitle(section, todoId, subId, el) {
   });
 }
 
+// ─── Tab Drag & Drop ───
+function onTabDragStart(e, section) {
+  if (e.target.closest('.tab-actions')) { e.preventDefault(); return; }
+  tabDragSection = section;
+  e.dataTransfer.effectAllowed = 'move';
+  setTimeout(() => e.currentTarget.classList.add('dragging'), 0);
+}
+function onTabDragEnd(e) {
+  e.currentTarget.classList.remove('dragging');
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-drag-over'));
+  tabDragSection = null;
+}
+function onTabDragOver(e, section) {
+  if (!tabDragSection || tabDragSection === section) return;
+  e.preventDefault();
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-drag-over'));
+  e.currentTarget.classList.add('tab-drag-over');
+}
+function onTabDrop(e, targetSection) {
+  e.preventDefault();
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('tab-drag-over'));
+  if (!tabDragSection || tabDragSection === targetSection) return;
+  const from = state.sections.indexOf(tabDragSection);
+  const to = state.sections.indexOf(targetSection);
+  if (from === -1 || to === -1) return;
+  state.sections.splice(from, 1);
+  state.sections.splice(to, 0, tabDragSection);
+  save(); render();
+}
+
 // ─── Drag & Drop ───
 function onDragStart(e, todoId, section) {
   dragState = { dragId: todoId, dragSection: section };
@@ -1707,7 +1743,13 @@ function renderTabs() {
   state.sections.forEach(section => {
     const count = (state.todos[section] || []).length;
     const isActive = state.activeTab === section && state.activeTab !== '__completed__';
-    html += `<button class="tab ${isActive ? 'active' : ''}" onclick="state.activeTab='${escapeHtml(section)}';save();render();">
+    html += `<button class="tab ${isActive ? 'active' : ''}"
+      draggable="true"
+      onclick="state.activeTab='${escapeHtml(section)}';save();render();"
+      ondragstart="onTabDragStart(event,'${escapeHtml(section)}')"
+      ondragend="onTabDragEnd(event)"
+      ondragover="onTabDragOver(event,'${escapeHtml(section)}')"
+      ondrop="onTabDrop(event,'${escapeHtml(section)}')">
       ${escapeHtml(section)}
       ${count > 0 ? `<span class="tab-count">${count}</span>` : ''}
       <span class="tab-actions">
