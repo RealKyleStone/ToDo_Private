@@ -598,6 +598,19 @@
     background: none; border: 1px solid var(--border); color: var(--text-secondary);
   }
   .sync-reconnect-banner .btn-dismiss:hover { background: var(--surface-hover); }
+
+  /* ── Sync Gate & Conflict Modals ── */
+  .sync-gate-modal { text-align: center; max-width: 460px; }
+  .sync-gate-icon { font-size: 2.5rem; margin-bottom: 12px; }
+  .sync-gate-modal h3 { font-size: 1.2rem; margin-bottom: 12px; }
+  .sync-gate-modal p { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 12px; line-height: 1.5; }
+  .sync-gate-warning { color: var(--warning) !important; font-weight: 500; background: var(--warning-light); padding: 8px 12px; border-radius: var(--radius-sm); }
+  .sync-gate-actions { justify-content: center !important; gap: 10px; flex-wrap: wrap; margin-top: 4px; }
+  .sync-conflict-modal p { font-size: 0.9rem; color: var(--text-secondary); margin-bottom: 16px; line-height: 1.5; }
+  .sync-conflict-actions { flex-direction: column !important; gap: 10px !important; }
+  .sync-conflict-actions .btn { text-align: left; }
+  .sync-conflict-actions small { opacity: 0.7; font-size: 0.8em; display: block; margin-top: 2px; }
+
   .sync-popover {
     position: absolute; top: 100%; right: 0; margin-top: 8px;
     background: var(--surface); border: 1px solid var(--border);
@@ -772,6 +785,38 @@
   </div>
 </div>
 
+<!-- Sync Gate Modal — shown on load when sync folder is disconnected -->
+<div class="modal-overlay" id="syncGateModal">
+  <div class="modal sync-gate-modal">
+    <div class="sync-gate-icon">⚠️</div>
+    <h3>Not Connected to Sync Folder</h3>
+    <p>Your todos were previously synced to <strong id="syncGateFolderName"></strong>. You are not currently connected.</p>
+    <p class="sync-gate-warning">Changes made while offline may be overwritten when you reconnect. Connect now to avoid losing data.</p>
+    <div class="modal-actions sync-gate-actions">
+      <button class="btn btn-primary" onclick="connectFromGate()">📂 Connect &amp; Sync</button>
+      <button class="btn btn-ghost" onclick="acknowledgeOffline()">Continue Offline</button>
+    </div>
+  </div>
+</div>
+
+<!-- Sync Conflict Modal — shown when reconnecting with local unsaved changes -->
+<div class="modal-overlay" id="syncConflictModal">
+  <div class="modal sync-conflict-modal">
+    <h3>⚠️ Unsaved Local Changes</h3>
+    <p>You made changes while offline and the sync folder also has data. Which version would you like to keep?</p>
+    <div class="modal-actions sync-conflict-actions">
+      <button class="btn btn-primary" onclick="resolveConflict(true)">
+        Keep my local changes
+        <small>Your offline edits will be saved to the sync folder</small>
+      </button>
+      <button class="btn btn-ghost" onclick="resolveConflict(false)">
+        Load from sync folder
+        <small>Your offline changes will be discarded</small>
+      </button>
+    </div>
+  </div>
+</div>
+
 <!-- Toast -->
 <div class="toast" id="toast">
   <span id="toastMsg"></span>
@@ -792,7 +837,8 @@ let state = {
   remindersEnabled: false,
   notifiedToday: {}, // { todoId: '2026-02-16' } — tracks which todos got notified today
   syncFolderName: null,   // Persisted folder name for reconnect prompt
-  syncBannerDismissed: false  // Whether user dismissed the reconnect banner this session
+  syncBannerDismissed: false,  // Whether user dismissed the reconnect banner this session
+  hasUnsyncedChanges: false   // True when edits were made while sync was disconnected
 };
 
 // Each todo: { id, title, priority, dueDate, subItems: [{id, title, done}], createdAt, reminder: bool }
@@ -808,9 +854,85 @@ let expandedNotes = new Set(); // Track which todos have notes panel expanded
 let syncDirHandle = null;
 const SYNC_FILENAME = 'todo-sync-data.json';
 let syncSaveTimeout = null;
+let syncGateAcknowledged = false;
+let resolveConflictPromise = null;
 
 function isFSAccessSupported() {
   return typeof window.showDirectoryPicker === 'function';
+}
+
+// ── IndexedDB: persist FileSystemDirectoryHandle across page loads ──
+function openHandleDB() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('todo-sync-db', 1);
+    req.onupgradeneeded = e => e.target.result.createObjectStore('handles');
+    req.onsuccess = e => resolve(e.target.result);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+async function storeHandle(handle) {
+  const db = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('handles', 'readwrite');
+    tx.objectStore('handles').put(handle, 'syncDir');
+    tx.oncomplete = resolve; tx.onerror = e => reject(e.target.error);
+  });
+}
+async function loadStoredHandle() {
+  const db = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('handles', 'readonly');
+    const req = tx.objectStore('handles').get('syncDir');
+    req.onsuccess = e => resolve(e.target.result || null);
+    req.onerror = e => reject(e.target.error);
+  });
+}
+async function clearStoredHandle() {
+  const db = await openHandleDB();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('handles', 'readwrite');
+    tx.objectStore('handles').delete('syncDir');
+    tx.oncomplete = resolve; tx.onerror = e => reject(e.target.error);
+  });
+}
+
+// Shared post-connection logic used by chooseSyncFolder and tryReconnectHandle
+async function doConnectFolder(handle) {
+  syncDirHandle = handle;
+  state.syncFolderName = handle.name;
+  state.syncBannerDismissed = false;
+  updateSyncUI();
+  await storeHandle(handle);
+  const beforeLoad = { sections: state.sections, todos: state.todos, completed: state.completed };
+  const loaded = await syncFromFolder();
+  if (loaded) {
+    if (state.hasUnsyncedChanges) {
+      const keepLocal = await showConflictModal();
+      if (keepLocal) {
+        state.sections = beforeLoad.sections;
+        state.todos = beforeLoad.todos;
+        state.completed = beforeLoad.completed;
+        state.sections.forEach(s => { if (!state.todos[s]) state.todos[s] = []; });
+        await syncToFolder();
+        state.hasUnsyncedChanges = false;
+        save(); render();
+        showToast('Your local changes saved to ' + handle.name);
+      } else {
+        state.hasUnsyncedChanges = false;
+        save(); render();
+        showToast('Loaded existing data from ' + handle.name);
+      }
+    } else {
+      save(); render();
+      showToast('Loaded existing data from ' + handle.name);
+    }
+  } else {
+    await syncToFolder();
+    state.hasUnsyncedChanges = false;
+    save();
+    showToast('Folder connected: ' + handle.name);
+  }
+  document.getElementById('syncGateModal').classList.remove('active');
 }
 
 async function chooseSyncFolder() {
@@ -819,21 +941,8 @@ async function chooseSyncFolder() {
     return;
   }
   try {
-    syncDirHandle = await window.showDirectoryPicker({ mode: 'readwrite' });
-    state.syncFolderName = syncDirHandle.name;
-    state.syncBannerDismissed = false;
-    updateSyncUI();
-    // If a sync file already exists in the folder, load from it first
-    const loaded = await syncFromFolder();
-    if (loaded) {
-      save();
-      render();
-      showToast('Loaded existing data from ' + syncDirHandle.name);
-    } else {
-      await syncToFolder();
-      save();
-      showToast('Folder connected: ' + syncDirHandle.name);
-    }
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    await doConnectFolder(handle);
   } catch (err) {
     if (err.name !== 'AbortError') {
       showToast('Failed to access folder');
@@ -847,6 +956,7 @@ function disconnectSyncFolder() {
   state.syncFolderName = null;
   state.syncBannerDismissed = false;
   save();
+  clearStoredHandle().catch(() => {});
   showToast('Sync folder disconnected');
   updateSyncUI();
   render();
@@ -866,6 +976,56 @@ function forgetSyncFolder() {
 
 function isSyncDisconnected() {
   return state.syncFolderName && !syncDirHandle;
+}
+
+function showSyncGate() {
+  document.getElementById('syncGateFolderName').textContent = state.syncFolderName || 'your sync folder';
+  document.getElementById('syncGateModal').classList.add('active');
+}
+
+function acknowledgeOffline() {
+  syncGateAcknowledged = true;
+  document.getElementById('syncGateModal').classList.remove('active');
+}
+
+async function connectFromGate() {
+  document.getElementById('syncGateModal').classList.remove('active');
+  // Try the stored handle first — user just clicks "Allow", no folder navigation needed
+  try {
+    const stored = await loadStoredHandle();
+    if (stored) {
+      const perm = await stored.requestPermission({ mode: 'readwrite' });
+      if (perm === 'granted') { await doConnectFolder(stored); return; }
+    }
+  } catch (e) { /* fall through to picker */ }
+  // No stored handle or permission denied — open folder picker
+  await chooseSyncFolder();
+  if (isSyncDisconnected() && !syncGateAcknowledged) showSyncGate();
+}
+
+// Called on init: silently reconnects if the browser already has permission
+async function tryRestoreHandle() {
+  if (!isFSAccessSupported()) return;
+  try {
+    const handle = await loadStoredHandle();
+    if (!handle) return;
+    // queryPermission never triggers a prompt — safe to call without a user gesture
+    const perm = await handle.queryPermission({ mode: 'readwrite' });
+    if (perm === 'granted') await doConnectFolder(handle);
+    // If 'prompt', the sync gate will appear and connectFromGate will request it
+  } catch (e) {
+    console.error('Could not restore sync handle:', e);
+  }
+}
+
+function showConflictModal() {
+  document.getElementById('syncConflictModal').classList.add('active');
+  return new Promise(resolve => { resolveConflictPromise = resolve; });
+}
+
+function resolveConflict(keepLocal) {
+  document.getElementById('syncConflictModal').classList.remove('active');
+  if (resolveConflictPromise) { resolveConflictPromise(keepLocal); resolveConflictPromise = null; }
 }
 
 async function syncToFolder() {
@@ -998,6 +1158,7 @@ document.addEventListener('click', (e) => {
 
 // ─── Persistence ───
 function save() {
+  if (isSyncDisconnected()) state.hasUnsyncedChanges = true;
   localStorage.setItem('kyle-todo-state', JSON.stringify(state));
   debouncedSyncToFolder();
 }
@@ -1020,6 +1181,10 @@ function init() {
   updateNotifButton();
   updateSyncUI();
   render();
+  // Try to silently restore the sync handle; show gate if still disconnected after
+  tryRestoreHandle().then(() => {
+    if (isSyncDisconnected()) showSyncGate();
+  });
   // Check reminders every 60 seconds
   checkReminders();
   setInterval(checkReminders, 60000);
