@@ -690,6 +690,58 @@
   }
   .undo-item-btn:hover { background: var(--accent); color: #fff; }
 
+  /* ── Stats Sidebar ── */
+  .stats-sidebar {
+    width: 200px; flex-shrink: 0;
+    background: var(--surface); border-right: 1px solid var(--border);
+    padding: 16px; overflow-y: auto;
+    max-height: calc(100vh - 110px); position: sticky; top: 110px;
+  }
+  .stats-row {
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 8px 2px; border-bottom: 1px solid var(--border);
+  }
+  .stats-row:last-of-type { border-bottom: none; }
+  .stats-label { font-size: 0.82rem; color: var(--text-secondary); }
+  .stats-count {
+    font-size: 1.05rem; font-weight: 700; color: var(--text-secondary);
+    min-width: 28px; text-align: right;
+  }
+  .stats-count.has-value { color: var(--accent); }
+  .stats-divider { border: none; border-top: 1px solid var(--border); margin: 12px 0; }
+  .stats-chart-btn { width: 100%; font-size: 0.82rem; text-align: center; justify-content: center; }
+
+  /* ── Chart Modal ── */
+  .chart-modal { max-width: 700px; width: 95vw; }
+  .chart-modal-header {
+    display: flex; align-items: center; justify-content: space-between;
+    margin-bottom: 20px; gap: 8px; flex-wrap: wrap;
+  }
+  .chart-modal-header h3 { margin: 0; font-size: 1.1rem; flex: 1; }
+  .chart-period-tabs {
+    display: flex; background: var(--bg); border: 1px solid var(--border);
+    border-radius: var(--radius-sm); padding: 2px; gap: 2px;
+  }
+  .chart-period-tabs button {
+    border: none; background: transparent; padding: 5px 12px;
+    border-radius: calc(var(--radius-sm) - 2px); font-size: 0.8rem;
+    color: var(--text-secondary); cursor: pointer; transition: all var(--transition);
+  }
+  .chart-period-tabs button.active {
+    background: var(--surface); color: var(--text); font-weight: 600;
+    box-shadow: 0 1px 2px rgba(0,0,0,0.12);
+  }
+  .chart-modal-close {
+    background: none; border: none; color: var(--text-secondary);
+    cursor: pointer; padding: 4px 8px; font-size: 1rem;
+    border-radius: var(--radius-sm); transition: all var(--transition);
+  }
+  .chart-modal-close:hover { background: var(--surface-hover); color: var(--text); }
+  .chart-empty {
+    text-align: center; padding: 48px 16px;
+    font-size: 0.9rem; color: var(--text-secondary); opacity: 0.6;
+  }
+
   /* ── Scrollbar ── */
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
@@ -697,7 +749,11 @@
   ::-webkit-scrollbar-thumb:hover { background: var(--text-secondary); }
 
   /* ── Responsive ── */
+  @media (max-width: 1100px) {
+    .stats-sidebar { width: 168px; }
+  }
   @media (max-width: 900px) {
+    .stats-sidebar { width: 140px; padding: 12px; }
     .undo-sidebar { width: 220px; }
   }
   @media (max-width: 600px) {
@@ -709,6 +765,16 @@
     .todo-actions { opacity: 1; }
     .sub-item .icon-btn { opacity: 1; }
     .app-layout { flex-direction: column; }
+    .stats-sidebar {
+      width: 100%; max-height: none; position: static;
+      border-right: none; border-bottom: 1px solid var(--border);
+      display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
+    }
+    .stats-sidebar .undo-sidebar-header { margin-bottom: 0; width: 100%; }
+    .stats-row { border-bottom: none; padding: 4px 8px;
+      background: var(--bg); border-radius: var(--radius-sm); min-width: 80px; }
+    .stats-divider { display: none; }
+    .stats-chart-btn { width: auto; }
     .undo-sidebar {
       width: 100%; max-height: none; position: static;
       border-left: none; border-top: 1px solid var(--border);
@@ -769,6 +835,7 @@
 
 <!-- Main Content -->
 <div class="app-layout">
+  <div class="stats-sidebar" id="statsSidebar"></div>
   <div class="main" id="mainContent"></div>
   <div class="undo-sidebar" id="undoSidebar"></div>
 </div>
@@ -782,6 +849,22 @@
       <button class="btn btn-ghost" onclick="closeModal()">Cancel</button>
       <button class="btn btn-primary" onclick="confirmModal()">Save</button>
     </div>
+  </div>
+</div>
+
+<!-- Chart Modal -->
+<div class="modal-overlay" id="chartModal">
+  <div class="modal chart-modal">
+    <div class="chart-modal-header">
+      <h3>📊 Completed Tasks</h3>
+      <div class="chart-period-tabs">
+        <button type="button" id="chartTab-daily" onclick="setChartPeriod('daily')">Daily</button>
+        <button type="button" id="chartTab-weekly" onclick="setChartPeriod('weekly')" class="active">Weekly</button>
+        <button type="button" id="chartTab-monthly" onclick="setChartPeriod('monthly')">Monthly</button>
+      </div>
+      <button class="chart-modal-close" onclick="closeChartModal()" title="Close">✕</button>
+    </div>
+    <div id="chartContent"></div>
   </div>
 </div>
 
@@ -1147,12 +1230,16 @@ function updateSyncUI() {
   }
 }
 
-// Close popover when clicking outside
+// Close popover / chart modal when clicking outside
 document.addEventListener('click', (e) => {
   const wrapper = document.querySelector('.sync-wrapper');
   const popover = document.getElementById('syncPopover');
   if (wrapper && popover && !wrapper.contains(e.target)) {
     popover.classList.remove('show');
+  }
+  const chartModal = document.getElementById('chartModal');
+  if (chartModal && chartModal.classList.contains('active') && e.target === chartModal) {
+    closeChartModal();
   }
 });
 
@@ -1609,6 +1696,7 @@ function hideToast() {
 function render() {
   renderTabs();
   renderContent();
+  renderStatsSidebar();
   renderUndoSidebar();
 }
 
@@ -1679,6 +1767,147 @@ function undoSessionItem(completedId) {
   sessionCompleted = sessionCompleted.filter(c => c.id !== completedId);
   save(); render();
   showToast(`"${todo.title}" restored to ${section}`);
+}
+
+// ─── Stats & Chart ───
+
+function getStatsCount(from, to) {
+  return state.completed.filter(c => {
+    const d = new Date(c.completedAt);
+    return d >= from && d < to;
+  }).length;
+}
+
+function statsToday() {
+  const s = new Date(); s.setHours(0, 0, 0, 0);
+  const e = new Date(s); e.setDate(s.getDate() + 1);
+  return getStatsCount(s, e);
+}
+
+function statsThisWeek() {
+  const s = new Date(); s.setHours(0, 0, 0, 0);
+  s.setDate(s.getDate() - s.getDay()); // back to Sunday
+  const e = new Date(s); e.setDate(s.getDate() + 7);
+  return getStatsCount(s, e);
+}
+
+function statsThisMonth() {
+  const now = new Date();
+  const s = new Date(now.getFullYear(), now.getMonth(), 1);
+  const e = new Date(now.getFullYear(), now.getMonth() + 1, 1);
+  return getStatsCount(s, e);
+}
+
+function getChartData(period) {
+  const now = new Date();
+  const buckets = [];
+  if (period === 'daily') {
+    for (let i = 13; i >= 0; i--) {
+      const s = new Date(now); s.setHours(0, 0, 0, 0); s.setDate(s.getDate() - i);
+      const e = new Date(s); e.setDate(s.getDate() + 1);
+      buckets.push({ label: s.toLocaleDateString([], { month: 'short', day: 'numeric' }), count: getStatsCount(s, e) });
+    }
+  } else if (period === 'weekly') {
+    const base = new Date(now); base.setHours(0, 0, 0, 0); base.setDate(base.getDate() - base.getDay());
+    for (let i = 11; i >= 0; i--) {
+      const s = new Date(base); s.setDate(base.getDate() - i * 7);
+      const e = new Date(s); e.setDate(s.getDate() + 7);
+      buckets.push({ label: s.toLocaleDateString([], { month: 'short', day: 'numeric' }), count: getStatsCount(s, e) });
+    }
+  } else {
+    for (let i = 11; i >= 0; i--) {
+      const s = new Date(now.getFullYear(), now.getMonth() - i, 1);
+      const e = new Date(now.getFullYear(), now.getMonth() - i + 1, 1);
+      buckets.push({ label: s.toLocaleDateString([], { month: 'short', year: '2-digit' }), count: getStatsCount(s, e) });
+    }
+  }
+  return buckets;
+}
+
+function buildBarChartSVG(data) {
+  const W = 600, H = 240;
+  const padL = 30, padR = 8, padT = 24, padB = 54;
+  const chartW = W - padL - padR, chartH = H - padT - padB;
+  const maxRaw = Math.max(...data.map(d => d.count), 1);
+  const maxVal = maxRaw <= 5 ? 5 : Math.ceil(maxRaw / 5) * 5;
+  const slotW = chartW / data.length;
+  const barW = Math.max(slotW * 0.55, 6);
+  let svg = '';
+
+  // Gridlines + Y labels
+  for (let i = 0; i <= 4; i++) {
+    const y = (padT + chartH - (chartH / 4) * i).toFixed(1);
+    const val = Math.round(maxVal / 4 * i);
+    svg += `<line x1="${padL}" y1="${y}" x2="${W - padR}" y2="${y}" stroke="var(--border)" stroke-width="1"/>`;
+    svg += `<text x="${padL - 4}" y="${(+y + 4).toFixed(1)}" text-anchor="end" font-size="10" fill="var(--text-secondary)">${val}</text>`;
+  }
+
+  // Bars + labels
+  data.forEach((d, i) => {
+    const barH = Math.max(d.count / maxVal * chartH, 0);
+    const x = (padL + i * slotW + (slotW - barW) / 2).toFixed(1);
+    const y = (padT + chartH - barH).toFixed(1);
+    const cx = (padL + i * slotW + slotW / 2).toFixed(1);
+    svg += `<rect x="${x}" y="${y}" width="${barW.toFixed(1)}" height="${barH.toFixed(1)}" rx="3" fill="var(--accent)" opacity="${d.count > 0 ? '0.85' : '0.15'}"/>`;
+    if (d.count > 0) svg += `<text x="${cx}" y="${(+y - 5).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="600" fill="var(--text)">${d.count}</text>`;
+    const lx = cx, ly = (padT + chartH + 10).toFixed(1);
+    svg += `<text x="${lx}" y="${ly}" text-anchor="end" font-size="9" fill="var(--text-secondary)" transform="rotate(-40,${lx},${ly})">${d.label}</text>`;
+  });
+
+  return `<svg viewBox="0 0 ${W} ${H}" style="width:100%;height:auto;display:block">${svg}</svg>`;
+}
+
+let chartPeriod = 'weekly';
+
+function openChartModal() {
+  chartPeriod = 'weekly';
+  ['daily', 'weekly', 'monthly'].forEach(p =>
+    document.getElementById('chartTab-' + p).classList.toggle('active', p === chartPeriod)
+  );
+  document.getElementById('chartModal').classList.add('active');
+  renderChart();
+}
+
+function closeChartModal() {
+  document.getElementById('chartModal').classList.remove('active');
+}
+
+function setChartPeriod(period) {
+  chartPeriod = period;
+  ['daily', 'weekly', 'monthly'].forEach(p =>
+    document.getElementById('chartTab-' + p).classList.toggle('active', p === period)
+  );
+  renderChart();
+}
+
+function renderChart() {
+  const data = getChartData(chartPeriod);
+  const total = data.reduce((s, d) => s + d.count, 0);
+  const label = chartPeriod === 'daily' ? 'last 14 days' : chartPeriod === 'weekly' ? 'last 12 weeks' : 'last 12 months';
+  document.getElementById('chartContent').innerHTML = total === 0
+    ? `<div class="chart-empty">No completed tasks in the ${label}.</div>`
+    : buildBarChartSVG(data);
+}
+
+function renderStatsSidebar() {
+  const today = statsToday(), week = statsThisWeek(), month = statsThisMonth();
+  document.getElementById('statsSidebar').innerHTML = `
+    <div class="undo-sidebar-header">📊 Stats</div>
+    <div class="stats-row">
+      <span class="stats-label">Today</span>
+      <span class="stats-count ${today > 0 ? 'has-value' : ''}">${today}</span>
+    </div>
+    <div class="stats-row">
+      <span class="stats-label">This week</span>
+      <span class="stats-count ${week > 0 ? 'has-value' : ''}">${week}</span>
+    </div>
+    <div class="stats-row">
+      <span class="stats-label">This month</span>
+      <span class="stats-count ${month > 0 ? 'has-value' : ''}">${month}</span>
+    </div>
+    <hr class="stats-divider">
+    <button type="button" class="btn btn-ghost stats-chart-btn" onclick="openChartModal()">📈 View Chart</button>
+  `;
 }
 
 function renderUndoSidebar() {
