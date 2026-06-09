@@ -1,77 +1,59 @@
-# 📋 ToDo List
+# TodoNative
 
-A simple, private, and powerful todo list app that runs entirely in your browser.
+This project was generated using [Angular CLI](https://github.com/angular/angular-cli) version 21.2.13.
 
-## Philosophy
+## Development server
 
-**Simplicity first.** No accounts, no servers, no databases. Just open the file and start organizing your life. Your data stays on your device — always.
+To start a local development server, run:
 
-**Privacy by design.** All data is stored in your browser's localStorage. Nothing is ever sent to a server. No tracking, no analytics, no cookies. You own your data completely.
+```bash
+ng serve
+```
 
-## Features
+Once the server is running, open your browser and navigate to `http://localhost:4200/`. The application will automatically reload whenever you modify any of the source files.
 
-### Life Sections
-Organize todos into customizable tabs representing different areas of your life (Work, Personal, Health, Finance, Learning, etc.). Add, rename, delete, and switch between sections freely.
+## Code scaffolding
 
-### Todos & Sub-items
-- Add todo items with **priority levels** (High / Medium / Low) and optional **due dates**
-- Break todos into **sub-items** with individual checkboxes
-- **Progress bars** auto-calculate from sub-item completion
-- **Overdue detection** highlights past-due items in red
-- **Inline editing** — double-click any todo or sub-item text to edit in place
+Angular CLI includes powerful code scaffolding tools. To generate a new component, run:
 
-### Drag & Drop
-Reorder both todos and sub-items by dragging them to the position you want.
+```bash
+ng generate component component-name
+```
 
-### Completed Tab
-Completed items move to a dedicated Completed tab, organized by life section with completion dates. Restore any item back to its original section with one click.
+For a complete list of available schematics (such as `components`, `directives`, or `pipes`), run:
 
-### Search
-Full-text search across all todos, sub-items, and completed items with highlighted matches.
+```bash
+ng generate --help
+```
 
-### Export & Import
-- **Export** your entire todo list as a JSON backup file
-- **Import** a backup to restore or transfer data — choose to merge with existing data or replace it entirely
+## Building
 
-### Folder Sync (Cross-Device)
-Optionally sync your todos to a local folder using the browser's File System Access API. Pair it with a cloud-synced folder to access your data across devices — no sign-in required.
+To build the project run:
 
-- Works with **Google Drive**, **OneDrive**, **Dropbox**, **iCloud**, or any folder that syncs to the cloud
-- No accounts, API keys, or server setup needed
-- Your data is just a JSON file in a folder you control
-- Requires **Chrome** or **Edge** (File System Access API is not supported in Firefox/Safari)
+```bash
+ng build
+```
 
-### Dark / Light Theme
-Toggle between light and dark modes. Your preference is remembered.
+This will compile your project and store the build artifacts in the `dist/` directory. By default, the production build optimizes your application for performance and speed.
 
-## Getting Started
+## Running unit tests
 
-1. Open `index.html` in any modern browser
-2. That's it. No build step, no dependencies, no installation.
+To execute unit tests with the [Vitest](https://vitest.dev/) test runner, use the following command:
 
-## Data & Backup
+```bash
+ng test
+```
 
-Your data lives in `localStorage` in your browser. To protect against data loss:
+## Running end-to-end tests
 
-- Use the **Export** button regularly to save a `.json` backup
-- Use the **Import** button to restore from a backup or transfer to another device/browser
+For end-to-end (e2e) testing, run:
 
-### Cross-Device Sync Setup
+```bash
+ng e2e
+```
 
-To sync your todos across multiple devices:
+Angular CLI does not come with an end-to-end testing framework by default. You can choose one that suits your needs.
 
-1. Install a cloud sync desktop app ([Google Drive](https://www.google.com/drive/download/), [OneDrive](https://www.microsoft.com/en-us/microsoft-365/onedrive/download), or [Dropbox](https://www.dropbox.com/install))
-2. Open the ToDo app in **Chrome** or **Edge**
-3. Click the **📁 Sync** button in the header
-4. Click **"Choose Folder"** and select a folder inside your synced drive
-5. Your todos will auto-save to that folder whenever you make changes
-6. On another device, repeat steps 1-4 and pick the same synced folder
-7. Click **"Sync Now"** to pull the latest data from the folder
+## Additional Resources
 
-> **Note:** The File System Access API is only available in Chromium-based browsers (Chrome, Edge). The sync feature will not appear in Firefox or Safari.
-
-## Tech Stack
-
-- **Zero dependencies** — pure HTML, CSS, and JavaScript in a single file
-- **No build tools** — no Node.js, no npm, no bundler
-- **No server required** — works offline, works from your filesystem
+For more information on using the Angular CLI, including detailed command references, visit the [Angular CLI Overview and Command Reference](https://angular.dev/tools/cli) page.

@@ -1,0 +1,335 @@
+<div class="app-shell" [attr.data-theme]="theme()">
+
+@if (!loaded()) {
+  <div class="loading-screen"><div class="loading-dot"></div></div>
+}
+
+@if (loaded()) {
+<main class="page">
+
+  <!-- Header -->
+  <header class="hero">
+    <div class="hero-top">
+      <h1>ToDo Native</h1>
+      <div class="hero-actions">
+        <!-- Sync button -->
+        <button type="button" class="icon-header-btn"
+          [class.sync-active]="sync().status === 'connected'"
+          [class.sync-warn]="sync().status === 'disconnected'"
+          (click)="chooseSyncFolder()" title="Sync to folder">
+          {{ sync().status === 'connected' ? '🔗' : '📁' }}
+        </button>
+        <!-- Notifications -->
+        <button type="button" class="icon-header-btn"
+          [class.notif-active]="notificationsEnabled()"
+          (click)="toggleNotifications()" title="Reminders">
+          {{ notificationsEnabled() ? '🔔' : '🔕' }}
+        </button>
+        <!-- Export/Import -->
+        <div class="export-wrap">
+          <button type="button" class="icon-header-btn" (click)="toggleExportMenu()" title="Backup">💾</button>
+          @if (showExportMenu()) {
+            <div class="export-menu">
+              <button type="button" class="export-item" (click)="exportData()">⬇️ Export backup</button>
+              <button type="button" class="export-item" (click)="triggerImport()">⬆️ Import backup</button>
+              @if (sync().status === 'connected') {
+                <button type="button" class="export-item" (click)="syncNow()">🔄 Sync now</button>
+                <button type="button" class="export-item danger-item" (click)="disconnectSync()">✕ Disconnect folder</button>
+              }
+            </div>
+          }
+        </div>
+        <!-- Theme -->
+        <button type="button" class="theme-btn" (click)="toggleTheme()">
+          {{ theme() === 'light' ? '🌙' : '☀️' }}
+        </button>
+      </div>
+    </div>
+
+    <!-- Sync status bar -->
+    @if (sync().status === 'connected') {
+      <div class="sync-bar connected">🔗 Syncing to "{{ sync().folderName }}"</div>
+    }
+    @if (sync().status === 'disconnected') {
+      <div class="sync-bar disconnected">⚠️ Folder disconnected — <button type="button" (click)="chooseSyncFolder()">Reconnect</button></div>
+    }
+
+    <!-- Search -->
+    <div class="search-wrap">
+      <span class="search-icon">🔍</span>
+      <input type="text" class="search-input" placeholder="Search all todos..."
+        [ngModel]="searchQuery()" (ngModelChange)="setSearch($event)" name="search" autocomplete="off"/>
+      @if (searchQuery()) {
+        <button type="button" class="search-clear" (click)="clearSearch()">✕</button>
+      }
+    </div>
+  </header>
+
+  <!-- Hidden file input -->
+  <input type="file" id="import-file-input" accept=".json" style="display:none" (change)="importData($event)"/>
+
+  <!-- Section Tabs -->
+  <nav class="tabs" role="tablist">
+    @for (section of sections(); track section) {
+      <button type="button" class="tab"
+        [class.active]="activeView() === 'todos' && section === activeTab()"
+        (click)="switchTab(section)"
+        (touchstart)="onTabPressStart(section, $event)"
+        (touchend)="onTabPressEnd()"
+        (touchcancel)="onTabPressEnd()"
+        (touchmove)="onTabPressEnd()"
+        (mousedown)="onTabPressStart(section, $event)"
+        (mouseup)="onTabPressEnd()"
+        (mouseleave)="onTabPressEnd()"
+        (contextmenu)="onTabContextMenu(section, $event)"
+      >
+        {{ section }}
+        @if (sectionCount(section) > 0) { <span class="tab-count">{{ sectionCount(section) }}</span> }
+      </button>
+    }
+    <button type="button" class="tab add-tab" (click)="addSection()">+</button>
+    <div class="tab-spacer"></div>
+    <!-- Stats tab -->
+    <button type="button" class="tab stats-tab" [class.active]="activeView() === 'stats'" (click)="setView('stats')">📊</button>
+    <!-- Completed tab -->
+    <button type="button" class="tab completed-tab" [class.active]="activeView() === 'completed'" (click)="setView('completed')">
+      ✅ @if (completedList().length > 0) { <span class="tab-count done-count">{{ completedList().length }}</span> }
+    </button>
+  </nav>
+
+  <!-- ── STATS VIEW ── -->
+  @if (activeView() === 'stats') {
+    <div class="stats-view">
+      <div class="stats-cards">
+        <div class="stat-card"><div class="stat-num">{{ statsToday() }}</div><div class="stat-label">Today</div></div>
+        <div class="stat-card"><div class="stat-num">{{ statsWeek() }}</div><div class="stat-label">This week</div></div>
+        <div class="stat-card"><div class="stat-num">{{ statsMonth() }}</div><div class="stat-label">This month</div></div>
+        <div class="stat-card accent"><div class="stat-num">{{ statsTotal() }}</div><div class="stat-label">All time</div></div>
+      </div>
+
+      <!-- Chart period tabs -->
+      <div class="chart-period-tabs">
+        <button type="button" class="period-btn" [class.active]="chartPeriod() === 'daily'" (click)="chartPeriod.set('daily')">Daily</button>
+        <button type="button" class="period-btn" [class.active]="chartPeriod() === 'weekly'" (click)="chartPeriod.set('weekly')">Weekly</button>
+        <button type="button" class="period-btn" [class.active]="chartPeriod() === 'monthly'" (click)="chartPeriod.set('monthly')">Monthly</button>
+      </div>
+
+      <!-- Bar chart -->
+      <div class="chart-wrap">
+        @if (statsTotal() === 0) {
+          <div class="empty"><div class="empty-icon">📊</div><p>Complete some todos to see your stats.</p></div>
+        } @else {
+          <div class="bar-chart">
+            @for (bucket of chartData(); track bucket.label) {
+              <div class="bar-col">
+                <div class="bar-label-top">{{ bucket.count > 0 ? bucket.count : '' }}</div>
+                <div class="bar-outer">
+                  <div class="bar-fill" [style.height.%]="chartMax() > 0 ? (bucket.count / chartMax()) * 100 : 0"></div>
+                </div>
+                <div class="bar-label">{{ bucket.label }}</div>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+
+  <!-- ── COMPLETED VIEW ── -->
+  } @else if (activeView() === 'completed') {
+    <div class="completed-view">
+      <div class="completed-header">
+        <span class="completed-title">Completed ({{ completedList().length }})</span>
+        @if (completedList().length > 0) {
+          <button type="button" class="clear-all-btn" (click)="clearAllCompleted()">Clear all</button>
+        }
+      </div>
+      @if (completedSearched().length === 0) {
+        <div class="empty"><div class="empty-icon">🏆</div><p>{{ searchQuery() ? 'No matches.' : 'Nothing completed yet.' }}</p></div>
+      } @else {
+        <ul class="list">
+          @for (item of completedSearched(); track item.id) {
+            <li class="item done completed-item">
+              <div class="item-main">
+                <div class="check done-check">✓</div>
+                <div class="item-body">
+                  <span class="text">{{ item.text }}</span>
+                  <div class="item-meta">
+                    <span class="section-tag">{{ item.section }}</span>
+                    <span class="completed-date">{{ formatDate(item.completedAt) }}</span>
+                  </div>
+                </div>
+                <div class="item-actions">
+                  <button type="button" class="restore-btn" (click)="restoreTodo(item.id)">↩️</button>
+                  <button type="button" class="del" (click)="deleteCompleted(item.id)">✕</button>
+                </div>
+              </div>
+            </li>
+          }
+        </ul>
+      }
+    </div>
+
+  <!-- ── TODOS VIEW ── -->
+  } @else {
+
+    <!-- Add form -->
+    <form class="add-form" (submit)="$event.preventDefault(); addTodo()">
+      <div class="add-row">
+        <input type="text" class="add-input" [placeholder]="'Add to ' + activeTab() + '...'"
+          [ngModel]="newTodoText()" (ngModelChange)="newTodoText.set($event)" name="newTodo" autocomplete="off"/>
+        <button type="submit" class="add-btn">Add</button>
+      </div>
+      <div class="add-meta">
+        <div class="priority-pills">
+          <button type="button" class="priority-pill" [class.selected]="newTodoPriority() === 'high'" data-priority="high" (click)="newTodoPriority.set('high')">🔴 High</button>
+          <button type="button" class="priority-pill" [class.selected]="newTodoPriority() === 'medium'" data-priority="medium" (click)="newTodoPriority.set('medium')">🟡 Med</button>
+          <button type="button" class="priority-pill" [class.selected]="newTodoPriority() === 'low'" data-priority="low" (click)="newTodoPriority.set('low')">🔵 Low</button>
+        </div>
+        <input type="date" class="date-input" [ngModel]="newTodoDueDate()" (ngModelChange)="newTodoDueDate.set($event)" name="dueDate"/>
+        @if (newTodoDueDate()) {
+          <button type="button" class="reminder-toggle"
+            [class.active]="newTodoReminder()"
+            (click)="newTodoReminder.update(v => !v)"
+            title="Enable reminder">
+            {{ newTodoReminder() ? '🔔' : '🔕' }}
+          </button>
+        }
+      </div>
+    </form>
+
+    <!-- Toolbar -->
+    <div class="toolbar">
+      <div class="toolbar-group">
+        <span class="toolbar-label">Filter:</span>
+        <button type="button" class="tool-btn" [class.active]="filterBy() === 'all'" (click)="setFilter('all')">All</button>
+        <button type="button" class="tool-btn" [class.active]="filterBy() === 'high'" data-priority="high" (click)="setFilter('high')">🔴</button>
+        <button type="button" class="tool-btn" [class.active]="filterBy() === 'medium'" data-priority="medium" (click)="setFilter('medium')">🟡</button>
+        <button type="button" class="tool-btn" [class.active]="filterBy() === 'low'" data-priority="low" (click)="setFilter('low')">🔵</button>
+      </div>
+      <div class="toolbar-sep"></div>
+      <div class="toolbar-group">
+        <span class="toolbar-label">Sort:</span>
+        <button type="button" class="tool-btn" [class.active]="sortBy() === 'manual'" (click)="setSort('manual')">Manual</button>
+        <button type="button" class="tool-btn" [class.active]="sortBy() === 'priority'" (click)="setSort('priority')">Priority</button>
+        <button type="button" class="tool-btn" [class.active]="sortBy() === 'due-date'" (click)="setSort('due-date')">Date</button>
+      </div>
+    </div>
+
+    <!-- Todo list -->
+    @if (currentTodos().length === 0) {
+      <div class="empty">
+        <div class="empty-icon">🎯</div>
+        <p>{{ searchQuery() ? 'No matches for "' + searchQuery() + '".' : filterBy() !== 'all' ? 'No ' + filterBy() + ' priority todos.' : 'No todos in ' + activeTab() + ' yet.' }}</p>
+      </div>
+    } @else {
+      <ul class="list">
+        @for (todo of currentTodos(); track todo.id) {
+          <li class="item"
+            [class.done]="todo.done"
+            [class.overdue]="!todo.done && isOverdue(todo.dueDate)"
+            [class.dragging]="dragId() === todo.id"
+            [class.drag-over]="dragOverId() === todo.id && dragId() !== todo.id"
+            [attr.data-todo-id]="todo.id"
+            draggable="true"
+            (dragstart)="onDragStart(todo.id, $event)"
+            (dragover)="onDragOver(todo.id, $event)"
+            (dragleave)="onDragLeave()"
+            (drop)="onDrop(todo.id, $event)"
+            (dragend)="onDragEnd()"
+            (touchstart)="onTouchDragStart(todo.id, $event)"
+            (touchmove)="onTouchDragMove($event)"
+            (touchend)="onTouchDragEnd($event)"
+          >
+            <div class="item-main">
+              <span class="drag-handle">⠿</span>
+              <button type="button" class="check" (click)="toggleTodo(todo.id)">@if (todo.done) { ✓ }</button>
+              <div class="item-body">
+                <span class="text">{{ todo.text }}</span>
+                <div class="item-meta">
+                  <button type="button" class="priority-badge" [attr.data-priority]="todo.priority" (click)="cyclePriority(todo.id)">
+                    {{ todo.priority === 'high' ? '🔴 High' : todo.priority === 'medium' ? '🟡 Med' : '🔵 Low' }}
+                  </button>
+                  @if (dueDateLabel(todo.dueDate)) {
+                    <span class="due-label" [class.overdue-text]="isOverdue(todo.dueDate)">📅 {{ dueDateLabel(todo.dueDate) }}</span>
+                  }
+                  @if (todo.dueDate) {
+                    <button type="button" class="reminder-mini" [class.active]="todo.reminderEnabled" (click)="toggleTodoReminder(todo.id)" title="Toggle reminder">
+                      {{ todo.reminderEnabled ? '🔔' : '🔕' }}
+                    </button>
+                  }
+                  @if (todo.subItems.length > 0) {
+                    <span class="progress-label">{{ subProgress(todo).done }}/{{ subProgress(todo).total }}</span>
+                    <div class="progress-bar"><div class="progress-fill" [style.width.%]="(subProgress(todo).done / subProgress(todo).total) * 100"></div></div>
+                  }
+                  @if (todo.notes.length > 0) { <span class="note-count-badge">📝 {{ todo.notes.length }}</span> }
+                </div>
+              </div>
+              <div class="item-actions">
+                <button type="button" class="notes-btn" [class.active]="notesPanelFor() === todo.id" (click)="toggleNotesPanel(todo.id)">📝</button>
+                <button type="button" class="sub-toggle" (click)="toggleSubInput(todo.id)">≡</button>
+                <button type="button" class="del" (click)="deleteTodo(todo.id)">✕</button>
+              </div>
+            </div>
+
+            @if (notesPanelFor() === todo.id) {
+              <div class="notes-panel">
+                <div class="notes-panel-header">📝 Notes</div>
+                @if (todo.notes.length === 0) { <p class="notes-empty">No notes yet.</p> }
+                @else {
+                  @for (note of todo.notes; track note.id) {
+                    <div class="note-item">
+                      <span class="note-text">{{ note.text }}</span>
+                      <div class="note-footer">
+                        <span class="note-date">{{ formatDate(note.createdAt) }}</span>
+                        <button type="button" class="note-del" (click)="deleteNote(todo.id, note.id)">✕</button>
+                      </div>
+                    </div>
+                  }
+                }
+                <div class="note-add">
+                  <input type="text" placeholder="Add a note..." [ngModel]="newNoteText()" (ngModelChange)="newNoteText.set($event)" [name]="'note-' + todo.id" (keydown.enter)="addNote(todo.id)" autocomplete="off"/>
+                  <button type="button" class="sub-add-btn" (click)="addNote(todo.id)">+</button>
+                </div>
+              </div>
+            }
+
+            @if (todo.subItems.length > 0) {
+              <ul class="sub-list">
+                @for (sub of todo.subItems; track sub.id) {
+                  <li class="sub-item" [class.done]="sub.done">
+                    <button type="button" class="sub-check" (click)="toggleSubItem(todo.id, sub.id)">@if (sub.done) { ✓ }</button>
+                    <span class="sub-text">{{ sub.text }}</span>
+                    <button type="button" class="sub-del" (click)="deleteSubItem(todo.id, sub.id)">✕</button>
+                  </li>
+                }
+              </ul>
+            }
+
+            @if (subInputFor() === todo.id) {
+              <div class="sub-add">
+                <input type="text" placeholder="Add sub-item..." [ngModel]="newSubText()" (ngModelChange)="newSubText.set($event)" [name]="'sub-' + todo.id" (keydown.enter)="addSubItem(todo.id)" autocomplete="off"/>
+                <button type="button" class="sub-add-btn" (click)="addSubItem(todo.id)">+</button>
+              </div>
+            }
+          </li>
+        }
+      </ul>
+    }
+  }
+
+</main>
+}
+
+@if (showExportMenu()) { <div class="overlay-dismiss" (click)="closeExportMenu()"></div> }
+
+@if (menuOpenFor(); as section) {
+  <div class="sheet-backdrop" (click)="closeMenu()">
+    <div class="sheet" (click)="$event.stopPropagation()">
+      <div class="sheet-title">{{ section }}</div>
+      <button type="button" class="sheet-item" (click)="renameSection(section)"><span class="sheet-icon">✏️</span> Rename</button>
+      <button type="button" class="sheet-item danger" (click)="deleteSection(section)"><span class="sheet-icon">🗑️</span> Delete</button>
+      <button type="button" class="sheet-item cancel" (click)="closeMenu()">Cancel</button>
+    </div>
+  </div>
+}
+</div>
