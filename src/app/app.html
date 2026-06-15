@@ -34,6 +34,9 @@
               <button type="button" class="export-item" (click)="triggerImport()">⬆️ Import backup</button>
               @if (sync().status === 'connected') {
                 <button type="button" class="export-item" (click)="syncNow()">🔄 Sync now</button>
+                @if (isNative) {
+                  <button type="button" class="export-item" (click)="copySyncPath()">📋 Copy sync path</button>
+                }
                 <button type="button" class="export-item danger-item" (click)="disconnectSync()">✕ Disconnect folder</button>
               }
             </div>

@@ -1,5 +1,12 @@
 import { Component, signal, computed, effect, OnInit } from '@angular/core';
 import { FormsModule } from '@angular/forms';
+import { Capacitor, registerPlugin } from '@capacitor/core';
+
+interface FolderPickerPlugin {
+  pickDirectory(): Promise<{ uri: string; name: string }>;
+  writeFile(opt: { uri: string; filename: string; data: string }): Promise<void>;
+}
+const FolderPicker = registerPlugin<FolderPickerPlugin>('FolderPicker');
 
 // ── Capacitor lazy-loaders ─────────────────────────
 let CapPreferences: {
@@ -80,6 +87,9 @@ interface SyncState {
 const STORAGE_KEY = 'todo-native-v7';
 const LONG_PRESS_MS = 500;
 const SYNC_FILENAME = 'todo-sync-data.json';
+const IS_NATIVE = Capacitor.isNativePlatform();
+const NATIVE_SYNC_URI_KEY = 'nativeSyncUri';
+const NATIVE_SYNC_NAME_KEY = 'nativeSyncName';
 
 const DEFAULT_STATE: AppState = {
   sections: ['Work', 'Personal', 'Health', 'Finance', 'Learning'],
@@ -128,6 +138,7 @@ export class App implements OnInit {
 
   // Sync
   protected readonly sync = signal<SyncState>({ status: 'idle', folderName: null });
+  protected readonly isNative = IS_NATIVE;
   private syncDirHandle: FileSystemDirectoryHandle | null = null;
   private syncSaveTimeout: ReturnType<typeof setTimeout> | null = null;
 
@@ -319,6 +330,15 @@ export class App implements OnInit {
   }
 
   private async tryRestoreSyncHandle(): Promise<void> {
+    if (IS_NATIVE) {
+      const uri = await storageGet(NATIVE_SYNC_URI_KEY);
+      const name = await storageGet(NATIVE_SYNC_NAME_KEY);
+      if (uri && name) {
+        this.sync.set({ status: 'connected', folderName: name });
+        await this.writeNativeSync();
+      }
+      return;
+    }
     if (!this.isFSAccessSupported()) return;
     try {
       const db = await this.openHandleDB();
@@ -330,6 +350,7 @@ export class App implements OnInit {
   }
 
   protected async chooseSyncFolder(): Promise<void> {
+    if (IS_NATIVE) { await this.connectNativeSync(); return; }
     if (!this.isFSAccessSupported()) {
       alert('Folder sync is not supported in this environment. Use Export/Import as a backup instead.');
       return;
@@ -349,7 +370,42 @@ export class App implements OnInit {
     await this.syncToFolder();
   }
 
+  private async connectNativeSync(): Promise<void> {
+    try {
+      const { uri, name } = await FolderPicker.pickDirectory();
+      await storageSet(NATIVE_SYNC_URI_KEY, uri);
+      await storageSet(NATIVE_SYNC_NAME_KEY, name);
+      this.sync.set({ status: 'connected', folderName: name });
+      await this.writeNativeSync();
+    } catch (e: any) {
+      if (e?.message !== 'CANCELLED') alert('Could not access folder.');
+    }
+  }
+
+  private async writeNativeSync(): Promise<void> {
+    const uri = await storageGet(NATIVE_SYNC_URI_KEY);
+    if (!uri) return;
+    try {
+      await FolderPicker.writeFile({
+        uri,
+        filename: SYNC_FILENAME,
+        data: JSON.stringify({
+          syncedAt: new Date().toISOString(), version: 7,
+          sections: this.state().sections, todos: this.state().todos, completed: this.state().completed,
+        }, null, 2),
+      });
+    } catch {
+      this.sync.set({ status: 'disconnected', folderName: this.sync().folderName });
+    }
+  }
+
   protected async disconnectSync(): Promise<void> {
+    if (IS_NATIVE) {
+      await storageSet(NATIVE_SYNC_URI_KEY, '');
+      await storageSet(NATIVE_SYNC_NAME_KEY, '');
+      this.sync.set({ status: 'idle', folderName: null });
+      return;
+    }
     this.syncDirHandle = null;
     this.sync.set({ status: 'idle', folderName: null });
     try {
@@ -360,18 +416,21 @@ export class App implements OnInit {
   }
 
   protected async syncNow(): Promise<void> {
+    if (IS_NATIVE) { await this.writeNativeSync(); alert('Synced!'); return; }
     if (!this.syncDirHandle) return;
     await this.syncToFolder();
     alert('Synced to ' + this.syncDirHandle.name);
   }
 
   private debouncedSyncToFolder(): void {
-    if (!this.syncDirHandle) return;
+    if (!IS_NATIVE && !this.syncDirHandle) return;
+    if (IS_NATIVE && this.sync().status !== 'connected') return;
     if (this.syncSaveTimeout) clearTimeout(this.syncSaveTimeout);
-    this.syncSaveTimeout = setTimeout(() => this.syncToFolder(), 1500);
+    this.syncSaveTimeout = setTimeout(() => IS_NATIVE ? this.writeNativeSync() : this.syncToFolder(), 1500);
   }
 
   private async syncToFolder(): Promise<void> {
+    if (IS_NATIVE) { await this.writeNativeSync(); return; }
     if (!this.syncDirHandle) return;
     try {
       const fileHandle = await (this.syncDirHandle as any).getFileHandle(SYNC_FILENAME, { create: true });
@@ -413,6 +472,11 @@ export class App implements OnInit {
   // ── Export / Import ────────────────────────────────
   protected toggleExportMenu(): void { this.showExportMenu.update(v => !v); }
   protected closeExportMenu(): void { this.showExportMenu.set(false); }
+  protected copySyncPath(): void {
+    const path = this.sync().folderName;
+    if (path) navigator.clipboard?.writeText(path);
+    this.closeExportMenu();
+  }
 
   protected exportData(): void {
     this.closeExportMenu();
