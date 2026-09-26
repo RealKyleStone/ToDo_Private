@@ -726,11 +726,11 @@ export class App implements OnInit {
       const rawTodos = p.todos ?? {};
       sections.forEach(s => {
         todos[s] = (rawTodos[s] ?? []).map((t: Partial<Todo>) => ({
-          id: t.id ?? '', text: t.text ?? '', done: t.done ?? false,
+          id: t.id ?? '', text: t.text ?? (t as Partial<Todo> & { title?: string }).title ?? '', done: t.done ?? false,
           priority: (t.priority as Priority) ?? 'medium', dueDate: t.dueDate ?? null,
-          reminderEnabled: t.reminderEnabled ?? false,
-          subItems: (t.subItems ?? []).map((sub: Partial<SubItem>) => ({ id: sub.id ?? '', text: sub.text ?? '', done: sub.done ?? false })),
-          notes: (t.notes ?? []).map((n: Partial<Note>) => ({ id: n.id ?? '', text: n.text ?? '', createdAt: n.createdAt ?? '' })),
+          reminderEnabled: t.reminderEnabled ?? (t as Partial<Todo> & { reminder?: boolean }).reminder ?? false,
+          subItems: (t.subItems ?? []).map((sub: Partial<SubItem>) => ({ id: sub.id ?? '', text: sub.text ?? (sub as Partial<SubItem> & { title?: string }).title ?? '', done: sub.done ?? false })),
+          notes: (t.notes ?? []).map((n: Partial<Note>) => ({ id: n.id ?? '', text: n.text ?? (n as Partial<Note> & { content?: string }).content ?? '', createdAt: n.createdAt ?? '' })),
         }));
       });
       const completed: CompletedTodo[] = (p.completed ?? []).map((c: Partial<CompletedTodo>) => ({
